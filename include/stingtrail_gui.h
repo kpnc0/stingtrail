@@ -1,0 +1,128 @@
+#ifndef STINGTRAIL_GUI_H
+#define STINGTRAIL_GUI_H
+
+#include <Raven.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include "stingtrail.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define STING_GLOW_GREEN_R  0.1608f
+#define STING_GLOW_GREEN_G  0.6706f
+#define STING_GLOW_GREEN_B  0.5294f
+
+#define STING_GLOW_ORANGE_R 1.0000f
+#define STING_GLOW_ORANGE_G 0.5843f
+#define STING_GLOW_ORANGE_B 0.0000f
+
+#define STING_GLOW_RED_R    1.0000f
+#define STING_GLOW_RED_G    0.2314f
+#define STING_GLOW_RED_B    0.1882f
+
+typedef enum {
+    STING_GLOW_NONE   = 0,
+    STING_GLOW_GREEN  = 1, /* Subtle green #29AB87 for successful/done nodes */
+    STING_GLOW_ORANGE = 2, /* Orange #FF9500 for pending/in_progress nodes */
+    STING_GLOW_RED    = 3  /* Red #FF3B30 for blocked/dead-end nodes */
+} sting_glow_type_t;
+
+typedef struct {
+    uint32_t id;
+    uint32_t parent_id;
+    int rnode;
+    int in_pin;
+    int out_pin;
+    int depth;
+    float orig_r;
+    float orig_g;
+    float orig_b;
+    float orig_badge_r;
+    float orig_badge_g;
+    float orig_badge_b;
+    sting_glow_type_t glow_type;
+    float glow_r;
+    float glow_g;
+    float glow_b;
+    float w;
+    float h;
+    float x;
+    float y;
+    uint8_t highlighted;
+} sting_gui_item_t;
+
+typedef struct {
+    Rid graph;
+    sting_gui_item_t *items;
+    size_t total_items;
+    int selected_rnode;
+    int hovered_rnode;
+} sting_gui_context_t;
+
+typedef enum {
+    STING_LAYOUT_HORIZONTAL = 0,
+    STING_LAYOUT_VERTICAL   = 1
+} sting_layout_mode_t;
+
+/* Layout & View configuration (Read-Only) */
+void sting_gui_set_vertical_view(bool enabled);
+bool sting_gui_is_vertical_view(void);
+void sting_gui_toggle_vertical_view(Rid graph, sting_state_t *st);
+
+/* Context Menu (Read-Only: navigation and view controls only, NO mutations) */
+Rid sting_gui_create_context_menu(Rid window, Rid graph, sting_state_t *st);
+Rid sting_gui_get_context_menu(void);
+Rid sting_gui_get_vertical_menu_item(void);
+Rid sting_gui_get_parent_menu_item(void);
+Rid sting_gui_get_random_child_menu_item(void);
+void sting_gui_open_context_menu_for_node(Rid graph, int node, float x, float y);
+
+/* Viewport & Camera animation */
+void sting_gui_start_camera_transition(Rid graph, float target_cx, float target_cy, float target_zoom, float duration);
+bool sting_gui_is_animating(void);
+void sting_gui_update_animation(float dt);
+void sting_gui_finish_animation(Rid graph);
+void sting_gui_get_camera_target(float *target_x, float *target_y, float *target_zoom);
+void sting_gui_reload_preserving_zoom(Rid graph, sting_state_t *st);
+
+/* Node inspection and navigation */
+int sting_gui_get_parent_rnode(int rnode);
+size_t sting_gui_get_children_count(int rnode);
+int sting_gui_get_random_child_rnode(int rnode);
+int sting_gui_get_first_child_rnode(int rnode);
+int sting_gui_get_next_sibling_rnode(int rnode, bool reverse);
+
+void sting_gui_go_to_node(Rid graph, int rnode);
+void sting_gui_go_to_parent(Rid graph, int rnode);
+void sting_gui_go_to_random_child(Rid graph, int rnode);
+void sting_gui_go_to_first_child(Rid graph, int rnode);
+void sting_gui_go_to_sibling(Rid graph, int rnode, bool reverse);
+
+/* Vim hjkl key handler:
+ *   h -> immediate parent
+ *   j -> next sibling
+ *   k -> previous sibling
+ *   l -> first child
+ */
+bool sting_gui_handle_key(Rid graph, RKey key, Ruint modifiers);
+
+/* DAG construction & event handling */
+int sting_gui_build_dag(Rid graph, sting_state_t *st);
+sting_gui_context_t *sting_gui_get_context(void);
+void sting_gui_highlight_chain(Rid graph, sting_gui_context_t *ctx, int selected_rnode);
+void sting_gui_highlight_immediate(Rid graph, sting_gui_context_t *ctx, int hovered_rnode);
+void sting_gui_select_node(Rid graph, int rnode);
+int sting_gui_handle_event(Rid widget, const REvent *event, void *user_data);
+void sting_gui_cleanup_context(void);
+
+/* Interactive entrypoint */
+int sting_gui_run(sting_state_t *st);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* STINGTRAIL_GUI_H */
