@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "stingtrail.h"
+#include "stingtrail_mcp.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +22,7 @@ static void print_usage(const char *prog) {
         "       statuses: pending, in_progress, done, blocked\n"
         "  status [--json]                                             Display board\n"
         "  export                                                      Export full state JSON\n"
+        "  mcp                                                         Run MCP JSON-RPC stdio server\n"
         "  version                                                     Print version\n"
         "  help                                                        Show this help\n",
         STINGTRAIL_VERSION, prog);
@@ -230,6 +232,10 @@ int main(int argc, char **argv) {
             printf("%s\n", buf);
         }
         return 0;
+    }
+
+    if (strcmp(cmd, "mcp") == 0 || strcmp(cmd, "mcp-stdio") == 0) {
+        return sting_mcp_run_stdio(&st);
     }
 
     fprintf(stderr, "error: unrecognized command '%s' (see --help)\n", cmd);

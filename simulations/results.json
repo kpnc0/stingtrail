@@ -1,0 +1,81 @@
+{
+  "timestamp": 1795536194.827341,
+  "total_runtime_seconds": 6.51,
+  "experiment_1_execution_hook": {
+    "advisory": {
+      "total_actions": 100,
+      "planned_steps": 42,
+      "unguarded_executions": 30,
+      "destructive_attempted": 34,
+      "destructive_intercepted_by_guard": 21,
+      "destructive_leaked_to_shell": 13,
+      "plan_rejections_missing_why": 7,
+      "stranded_pending_steps": 9,
+      "completed_steps": 33
+    },
+    "atomic": {
+      "total_actions": 100,
+      "planned_steps": 72,
+      "unguarded_executions": 0,
+      "destructive_attempted": 28,
+      "destructive_intercepted_by_guard": 28,
+      "destructive_leaked_to_shell": 0,
+      "plan_rejections_missing_why": 0,
+      "stranded_pending_steps": 0,
+      "completed_steps": 72
+    }
+  },
+  "experiment_2_refutation_cascades": {
+    "naive": {
+      "total_steps_executed": 12,
+      "wasted_steps": 5,
+      "refutations_logged": 2,
+      "steps_saved": 0,
+      "step_efficiency_pct": 58.3,
+      "dag_entries": 6,
+      "dag_steps": 12
+    },
+    "hard_cascade": {
+      "total_steps_executed": 7,
+      "wasted_steps": 0,
+      "refutations_logged": 2,
+      "steps_saved": 5,
+      "step_efficiency_pct": 100.0,
+      "dag_entries": 6,
+      "dag_steps": 12
+    },
+    "epistemic_soft": {
+      "total_steps_executed": 7,
+      "wasted_steps": 0,
+      "refutations_logged": 2,
+      "steps_saved": 5,
+      "step_efficiency_pct": 100.0,
+      "dag_entries": 6,
+      "dag_steps": 12
+    }
+  },
+  "experiment_3_guard_fuzzing_count": 31,
+  "experiment_3_evasions": 10,
+  "experiment_3_false_blocks": 6,
+  "experiment_4_concurrency_buffers": {
+    "buffer": {
+      "nodes_created": 256,
+      "node_err_count": 13,
+      "steps_created": 256,
+      "step_err_count": 13,
+      "journal_lines": 512
+    },
+    "concurrency": {
+      "corrupt_lines": 0,
+      "total_records": 151,
+      "collisions_count": 33,
+      "collisions_sample": {
+        "11": 2,
+        "15": 4,
+        "17": 4,
+        "19": 4,
+        "21": 4
+      }
+    }
+  }
+}

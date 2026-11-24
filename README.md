@@ -119,7 +119,47 @@ STEP_ID=$(./build/stingtrail plan "Fuzz directories using wordlist" --why "Find 
 
 ---
 
-## 5. Read-Only GUI Viewer (`stingtrail-gui`)
+## 5. Model Context Protocol Server (`stingtrail-mcp`)
+
+Stingtrail includes a zero-dependency Model Context Protocol (MCP) server wrapper built directly on `include/stingtrail.h` without any GUI or external library requirements. It enables AI agents to plan, log hypotheses, update steps, inspect boards, and enforce fail-closed security guards natively via standard MCP JSON-RPC 2.0 over `stdio`.
+
+### Invocation
+```bash
+# Standalone binary
+./build/stingtrail-mcp [--db <journal.jsonl>] [--scope <allowed_hosts>]
+
+# Or via CLI subcommand
+./build/stingtrail mcp [--db <journal.jsonl>] [--scope <allowed_hosts>]
+```
+
+### Client Configuration (e.g. Claude Desktop, Cursor, AGY)
+```json
+{
+  "mcpServers": {
+    "stingtrail": {
+      "command": "/path/to/stingtrail/build/stingtrail-mcp",
+      "args": ["--db", "stingtrail.jsonl", "--scope", "10.0.0.0/24,api.internal"]
+    }
+  }
+}
+```
+
+### Exposed MCP Tools
+1. **`stingtrail_node`**: Record a conceptual DAG root node (`premise`, `asset`, `context`).
+2. **`stingtrail_log`**: Record epistemic reasoning (`observation`, `hypothesis`, `evidence`, `refutation`, `finding`).
+3. **`stingtrail_plan`**: Propose an operational step with mandatory `why` rationale and priority `1` (critical) to `5` (low). Fail-closed guards reject unjustified or destructive actions.
+4. **`stingtrail_step`**: Update step lifecycle state (`pending`, `in_progress`, `done`, `blocked`) and record concrete outcomes.
+5. **`stingtrail_status`**: Retrieve the mission board (ASCII text or JSON structure).
+6. **`stingtrail_export`**: Export the complete DAG state journal as JSON.
+7. **`stingtrail_guard`**: Validate arbitrary action commands and target hosts against destructive patterns and authorization scope.
+
+### Exposed MCP Resources
+- `stingtrail://board`: Current formatted mission critical-thinking board (`text/plain`).
+- `stingtrail://journal`: Complete DAG journal state (`application/json`).
+
+---
+
+## 6. Read-Only GUI Viewer (`stingtrail-gui`)
 
 For visual inspection of mission graphs without altering state, `stingtrail-gui` provides a read-only 2D flow visualizer built on Raven.
 
@@ -141,18 +181,21 @@ For visual inspection of mission graphs without altering state, `stingtrail-gui`
 
 ---
 
-## 6. Architecture & File Layout
+## 7. Architecture & File Layout
 
 ```
 stingtrail/
-├── Makefile                     # Multi-target Makefile (builds CLI & Read-Only GUI)
+├── Makefile                     # Multi-target Makefile (builds CLI, MCP & Read-Only GUI)
 ├── README.md                    # User & Agent documentation
 ├── .gitignore                   # Ignores build/ and *.jsonl
 ├── include/
 │   ├── stingtrail.h             # Core DAG structs, buffer & safety guard APIs
+│   ├── stingtrail_mcp.h         # Zero-dependency MCP server declarations
 │   └── stingtrail_gui.h         # Read-only GUI declarations & vim keybindings
 ├── src/
 │   ├── main.c                  # Stateless CLI argument dispatcher
+│   ├── mcp_main.c              # Standalone MCP server binary entrypoint
+│   ├── mcp.c                   # Zero-dependency MCP JSON-RPC protocol engine
 │   ├── gui_main.c              # Read-only GUI binary entrypoint
 │   ├── gui.c                   # Raven DAG visualizer & vim hjkl navigation
 │   ├── state.c                 # In-memory DAG state manager & deduplicator
@@ -161,5 +204,6 @@ stingtrail/
 │   └── json.c                  # Zero-dependency JSON string parser & serializer
 └── tests/
     ├── test_stingtrail.c        # Core CLI & DAG unit test suite
+    ├── test_mcp.c               # MCP protocol & tool dispatch test suite
     └── test_gui.c               # Read-only GUI & vim navigation test suite
 ```
