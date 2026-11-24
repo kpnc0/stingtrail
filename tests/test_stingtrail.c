@@ -268,6 +268,79 @@ TEST(state_export_and_board) {
     printf("--- End Test Board Rendering ---\n");
 }
 
+TEST(hook_semantic_classification_and_destructives) {
+    /* Destructive patterns */
+    ASSERT_TRUE(sting_is_destructive("rm -rf /tmp"));
+    ASSERT_TRUE(sting_is_destructive("rm -r -f /var"));
+    ASSERT_TRUE(sting_is_destructive("rm -f -r /var"));
+    ASSERT_TRUE(sting_is_destructive("shred /tmp/file"));
+    ASSERT_TRUE(sting_is_destructive("dd if=/dev/zero of=/dev/sda"));
+    ASSERT_TRUE(sting_is_destructive(":(){ :|:& };:"));
+    ASSERT_TRUE(sting_is_destructive("chmod -R 777 /"));
+    ASSERT_FALSE(sting_is_destructive("ls -la /tmp"));
+    ASSERT_FALSE(sting_is_destructive("curl http://example.com"));
+
+    /* Benign navigation commands */
+    ASSERT_TRUE(sting_is_benign_navigation("pwd"));
+    ASSERT_TRUE(sting_is_benign_navigation("ls -la /tmp"));
+    ASSERT_TRUE(sting_is_benign_navigation("cd /tmp/Experiments"));
+    ASSERT_TRUE(sting_is_benign_navigation("cat /etc/hosts"));
+    ASSERT_TRUE(sting_is_benign_navigation("git status"));
+    ASSERT_TRUE(sting_is_benign_navigation("git diff HEAD~1"));
+    ASSERT_TRUE(sting_is_benign_navigation("git log -n 5"));
+    ASSERT_TRUE(sting_is_benign_navigation("echo 'hello'"));
+    ASSERT_TRUE(sting_is_benign_navigation("which python3"));
+    ASSERT_FALSE(sting_is_benign_navigation("curl http://10.0.0.1"));
+    ASSERT_FALSE(sting_is_benign_navigation("nmap -sT 10.0.0.1"));
+    ASSERT_FALSE(sting_is_benign_navigation("make clean"));
+    ASSERT_FALSE(sting_is_benign_navigation("gcc -o test test.c"));
+
+    /* Hook classification with and without active context */
+    const char *reason = NULL;
+    /* Benign allows without context */
+    ASSERT_EQ_INT(sting_hook_classify("ls -la", 0, &reason), STING_HOOK_ALLOW_BENIGN);
+    ASSERT_EQ_INT(sting_hook_classify("pwd", 0, &reason), STING_HOOK_ALLOW_BENIGN);
+
+    /* Destructive blocks even with active context */
+    ASSERT_EQ_INT(sting_hook_classify("rm -rf /tmp/data", 10, &reason), STING_HOOK_BLOCK_DESTRUCTIVE);
+
+    /* Exploratory blocks when no context (context = 0) */
+    reason = NULL;
+    ASSERT_EQ_INT(sting_hook_classify("curl http://10.0.0.1", 0, &reason), STING_HOOK_BLOCK_NO_CONTEXT);
+    ASSERT_TRUE(reason != NULL);
+
+    /* Exploratory allows when context is set (context = 10) */
+    reason = NULL;
+    ASSERT_EQ_INT(sting_hook_classify("curl http://10.0.0.1", 10, &reason), STING_HOOK_ALLOW_ACTIVE);
+}
+
+TEST(context_management_and_persistence) {
+    const char *test_db = "test_tmp_context.jsonl";
+    unlink(test_db);
+    unlink("test_tmp_context.jsonl.context");
+
+    /* Initially no context */
+    uint32_t ctx = sting_context_get(test_db);
+    ASSERT_EQ_INT(ctx, 0);
+
+    /* Set context to node #42 */
+    bool ok = sting_context_set(test_db, 42);
+    ASSERT_TRUE(ok);
+
+    ctx = sting_context_get(test_db);
+    ASSERT_EQ_INT(ctx, 42);
+
+    /* Clear context */
+    ok = sting_context_clear(test_db);
+    ASSERT_TRUE(ok);
+
+    ctx = sting_context_get(test_db);
+    ASSERT_EQ_INT(ctx, 0);
+
+    unlink(test_db);
+    unlink("test_tmp_context.jsonl.context");
+}
+
 int main(void) {
     printf("=== Stingtrail Test Suite ===\n");
     RUN_TEST(json_buffer_and_escaping);
@@ -278,6 +351,8 @@ int main(void) {
     RUN_TEST(reasoning_entries_and_steps);
     RUN_TEST(journal_persistence_and_reload);
     RUN_TEST(state_export_and_board);
+    RUN_TEST(hook_semantic_classification_and_destructives);
+    RUN_TEST(context_management_and_persistence);
 
     printf("=== Result: %d/%d tests passed ===\n", g_tests_passed, g_tests_run);
     return (g_tests_passed == g_tests_run) ? 0 : 1;

@@ -80,6 +80,30 @@ Exports the complete DAG (all nodes, reasoning entries, steps, and transitions) 
 ./build/stingtrail export
 ```
 
+#### 7. Active Context Management (`context`)
+Manages the active hypothesis or premise pointer for the shell session, enabling automatic DAG parent attribution.
+```bash
+# Check current active context
+./build/stingtrail context get
+
+# Bind session to an active hypothesis or premise node
+./build/stingtrail context set <node_or_entry_id>
+
+# Clear active context
+./build/stingtrail context clear
+```
+
+#### 8. Synchronous Shell Interceptor Hook (`hook`)
+Installs a zero-dependency, microsecond (`~1.18ms`) synchronous shell trap into an agent's `bash` or `zsh` session.
+```bash
+# Evaluate hook in current shell
+eval "$(./build/stingtrail hook)"
+```
+- **Benign Navigation Bypass**: Commands like `cd`, `ls`, `pwd`, `cat`, `git status`, and `which` execute silently without friction.
+- **Fail-Closed Destructive Guard**: Dangerous commands (`rm -rf`, `shred`, `dd if=`, fork bombs) are blocked synchronously before execution (exit code 126).
+- **Epistemic Discipline Gate**: Exploratory or mutative commands (`curl`, `nmap`, `make`, `python3`) are blocked if executed without an active hypothesis, prompting the agent to bind an intent.
+- **Automatic Step Attribution**: When an active context is set, exploratory commands are automatically planned and closed under the active hypothesis in `stingtrail.jsonl`.
+
 ---
 
 ## 3. Operational Safety Guards

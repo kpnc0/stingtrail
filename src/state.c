@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 void sting_state_init(sting_state_t *st, const char *journal_path) {
     if (!st) return;
@@ -410,4 +411,45 @@ bool sting_state_to_json(const sting_state_t *st, char *out_buf, size_t out_cap)
 
     sting_buf_append(&b, "]}");
     return !b.overflow;
+}
+
+static void get_context_path(const char *journal_path, char *out, size_t cap) {
+    const char *jp = (journal_path && journal_path[0]) ? journal_path : "stingtrail.jsonl";
+    snprintf(out, cap, "%s.context", jp);
+}
+
+uint32_t sting_context_get(const char *journal_path) {
+    const char *env = getenv("STINGTRAIL_CONTEXT");
+    if (env && env[0]) {
+        unsigned long v = strtoul(env, NULL, 10);
+        if (v > 0) return (uint32_t)v;
+    }
+    char path[512];
+    get_context_path(journal_path, path, sizeof(path));
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    char line[64];
+    uint32_t id = 0;
+    if (fgets(line, sizeof(line), f)) {
+        id = (uint32_t)strtoul(line, NULL, 10);
+    }
+    fclose(f);
+    return id;
+}
+
+bool sting_context_set(const char *journal_path, uint32_t context_id) {
+    char path[512];
+    get_context_path(journal_path, path, sizeof(path));
+    FILE *f = fopen(path, "w");
+    if (!f) return false;
+    fprintf(f, "%u\n", context_id);
+    fclose(f);
+    return true;
+}
+
+bool sting_context_clear(const char *journal_path) {
+    char path[512];
+    get_context_path(journal_path, path, sizeof(path));
+    unlink(path);
+    return true;
 }

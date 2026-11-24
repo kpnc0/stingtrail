@@ -37,6 +37,23 @@ sting_guard_verdict_t sting_guard_check(const sting_scope_t *s,
                                         const char *action,
                                         const char **reason_out);
 
+/* --- Synchronous Shell Hook & Semantic Classifier --- */
+typedef enum {
+    STING_HOOK_ALLOW_BENIGN = 0,     /* Benign navigation, run without logging */
+    STING_HOOK_ALLOW_ACTIVE = 1,     /* Exploratory with active hypothesis, auto-logged */
+    STING_HOOK_BLOCK_NO_CONTEXT = 2, /* Exploratory without active hypothesis, blocked */
+    STING_HOOK_BLOCK_DESTRUCTIVE = 3 /* Destructive pattern, blocked fail-closed */
+} sting_hook_verdict_t;
+
+bool sting_is_destructive(const char *cmd);
+bool sting_is_benign_navigation(const char *cmd);
+sting_hook_verdict_t sting_hook_classify(const char *cmd, uint32_t active_context_id, const char **reason_out);
+
+/* --- Session Context Management --- */
+uint32_t sting_context_get(const char *journal_path);
+bool sting_context_set(const char *journal_path, uint32_t context_id);
+bool sting_context_clear(const char *journal_path);
+
 /* --- Critical-Thinking DAG: Nodes, Entries, Steps --- */
 typedef struct {
     uint32_t id;
