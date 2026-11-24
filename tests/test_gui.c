@@ -219,12 +219,65 @@ TEST(camera_transition_and_layout_toggles) {
     Rshutdown();
 }
 
+TEST(gui_focus_and_see_all) {
+    init_headless_raven();
+
+    sting_state_t st;
+    sting_state_init(&st, NULL);
+
+    uint32_t root = sting_state_add_node(&st, "premise", "Focus Test Root", "Scope Alpha", false);
+    uint32_t s1 = sting_state_plan_step(&st, root, 1, "10.0.0.1", "Port scan", "Find services", false, NULL);
+    uint32_t c1 = sting_state_add_entry(&st, s1, "observation", "info", "Open ports", "22, 80", false);
+    uint32_t other = sting_state_add_node(&st, "premise", "Unrelated Branch", "Scope Beta", false);
+    (void)c1; (void)other;
+
+    Rid graph = Rnode_graph_create();
+    sting_gui_build_dag(graph, &st);
+
+    sting_gui_context_t *ctx = sting_gui_get_context();
+    ASSERT_TRUE(ctx != NULL);
+    ASSERT_EQ_INT(ctx->total_items, 4);
+
+    /* Focus on step s1 */
+    sting_gui_focus_node(graph, &st, s1);
+    ctx = sting_gui_get_context();
+    ASSERT_TRUE(ctx != NULL);
+    ASSERT_EQ_INT(sting_gui_get_focus_id(), s1);
+    ASSERT_EQ_INT(ctx->total_items, 2); /* s1 and c1 only */
+
+    /* Verify s1 is re-anchored as root (parent_id 0, depth 0) */
+    bool found_s1 = false;
+    for (size_t i = 0; i < ctx->total_items; i++) {
+        if (ctx->items[i].id == s1) {
+            found_s1 = true;
+            ASSERT_EQ_INT(ctx->items[i].parent_id, 0);
+            ASSERT_EQ_INT(ctx->items[i].depth, 0);
+        }
+    }
+    ASSERT_TRUE(found_s1);
+
+    /* Reset focus ("See all") */
+    sting_gui_reset_focus(graph, &st);
+    ctx = sting_gui_get_context();
+    ASSERT_TRUE(ctx != NULL);
+    ASSERT_EQ_INT(sting_gui_get_focus_id(), 0);
+    ASSERT_EQ_INT(ctx->total_items, 4);
+
+    /* Verify menu item getters */
+    ASSERT_TRUE(sting_gui_get_see_only_this_menu_item() != R_INVALID_ID);
+    ASSERT_TRUE(sting_gui_get_see_all_menu_item() != R_INVALID_ID);
+
+    sting_gui_cleanup_context();
+    Rshutdown();
+}
+
 int main(void) {
     printf("=== Stingtrail-GUI Unit & Integration Test Suite ===\n");
     RUN_TEST(headless_dag_build_and_semantic_glow);
     RUN_TEST(read_only_context_menu);
     RUN_TEST(vim_hjkl_keybindings);
     RUN_TEST(camera_transition_and_layout_toggles);
+    RUN_TEST(gui_focus_and_see_all);
 
     printf("=== Result: %d/%d tests passed ===\n", g_tests_passed, g_tests_run);
     return (g_tests_passed == g_tests_run) ? 0 : 1;

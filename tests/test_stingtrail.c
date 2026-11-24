@@ -341,6 +341,44 @@ TEST(context_management_and_persistence) {
     unlink("test_tmp_context.jsonl.context");
 }
 
+TEST(state_focus_traversal_and_json) {
+    sting_state_t st;
+    sting_state_init(&st, NULL);
+
+    uint32_t p1 = sting_state_add_node(&st, "premise", "Root Premise", "Initial premise", false);
+    uint32_t h1 = sting_state_add_entry(&st, p1, "hypothesis", "medium", "Hypothesis 1", "Detailed hyp", false);
+    uint32_t s1 = sting_state_plan_step(&st, h1, 1, "target.local", "Execute Scan", "Check vulnerability", false, NULL);
+    uint32_t o1 = sting_state_add_entry(&st, s1, "observation", "info", "Scan Output", "Port 80 open", false);
+    uint32_t r1 = sting_state_add_entry(&st, s1, "refutation", "high", "Scan Refutation", "Firewall blocked", false);
+    uint32_t other = sting_state_add_node(&st, "premise", "Unrelated Premise", "Other scope", false);
+    (void)o1; (void)r1; (void)other;
+
+    char json_buf[16384];
+    bool ok = sting_state_focused_to_json(&st, s1, json_buf, sizeof(json_buf));
+    ASSERT_TRUE(ok);
+
+    /* Target ID and focused mode present */
+    ASSERT_TRUE(strstr(json_buf, "\"target_id\": 3") != NULL || strstr(json_buf, "\"target_id\":3") != NULL);
+    ASSERT_TRUE(strstr(json_buf, "\"traversal\": \"hourglass_v1\"") != NULL || strstr(json_buf, "\"traversal\":\"hourglass_v1\"") != NULL);
+
+    /* Ancestors present */
+    ASSERT_TRUE(strstr(json_buf, "Root Premise") != NULL);
+    ASSERT_TRUE(strstr(json_buf, "Hypothesis 1") != NULL);
+
+    /* Target present */
+    ASSERT_TRUE(strstr(json_buf, "Execute Scan") != NULL);
+
+    /* Descendants present */
+    ASSERT_TRUE(strstr(json_buf, "Scan Output") != NULL);
+    ASSERT_TRUE(strstr(json_buf, "Scan Refutation") != NULL);
+
+    /* Unrelated branch omitted */
+    ASSERT_TRUE(strstr(json_buf, "Unrelated Premise") == NULL);
+
+    /* Exercise text printing without crashing */
+    sting_state_print_focused(&st, s1);
+}
+
 int main(void) {
     printf("=== Stingtrail Test Suite ===\n");
     RUN_TEST(json_buffer_and_escaping);
@@ -353,6 +391,7 @@ int main(void) {
     RUN_TEST(state_export_and_board);
     RUN_TEST(hook_semantic_classification_and_destructives);
     RUN_TEST(context_management_and_persistence);
+    RUN_TEST(state_focus_traversal_and_json);
 
     printf("=== Result: %d/%d tests passed ===\n", g_tests_passed, g_tests_run);
     return (g_tests_passed == g_tests_run) ? 0 : 1;

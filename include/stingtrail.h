@@ -126,6 +126,8 @@ bool sting_state_update_step(sting_state_t *st, uint32_t step_id,
 /* Output & Serialization */
 bool sting_state_to_json(const sting_state_t *st, char *out_buf, size_t out_cap);
 void sting_state_print_board(const sting_state_t *st);
+void sting_state_print_focused(const sting_state_t *st, uint32_t target_id);
+bool sting_state_focused_to_json(const sting_state_t *st, uint32_t target_id, char *out_buf, size_t out_cap);
 
 /* Journal persistence */
 bool sting_store_load(sting_state_t *st);

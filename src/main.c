@@ -20,8 +20,9 @@ static void print_usage(const char *prog) {
         "       Propose a prioritized action step with mandatory rationale\n"
         "  step <id> <status> [outcome]                                Update step state\n"
         "       statuses: pending, in_progress, done, blocked\n"
-        "  status [--json]                                             Display board\n"
-        "  export                                                      Export full state JSON\n"
+        "  status [--json] [--focus <id>]                              Display board or focused subtree\n"
+        "  focus <id> [--json]                                         Display focused context (hourglass traversal)\n"
+        "  export [--focus <id>]                                       Export full or focused state JSON\n"
         "  hook                                                        Print synchronous shell hook integration script\n"
         "  hook-eval <command>                                         Evaluate command under guard and active context\n"
         "  context [get | set <id> | clear]                            Manage active hypothesis context\n"
@@ -212,7 +213,12 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    if (strcmp(cmd, "status") == 0) {
+    if (strcmp(cmd, "focus") == 0) {
+        if (arg_idx >= argc) {
+            fprintf(stderr, "error: focus requires <id>\n");
+            return 1;
+        }
+        uint32_t target_id = (uint32_t)atoi(argv[arg_idx++]);
         bool json_mode = false;
         while (arg_idx < argc) {
             if (strcmp(argv[arg_idx], "--json") == 0) json_mode = true;
@@ -220,19 +226,69 @@ int main(int argc, char **argv) {
         }
         if (json_mode) {
             char buf[65536];
-            if (sting_state_to_json(&st, buf, sizeof(buf))) {
+            if (sting_state_focused_to_json(&st, target_id, buf, sizeof(buf))) {
                 printf("%s\n", buf);
             }
         } else {
-            sting_state_print_board(&st);
+            sting_state_print_focused(&st, target_id);
+        }
+        return 0;
+    }
+
+    if (strcmp(cmd, "status") == 0) {
+        bool json_mode = false;
+        uint32_t focus_id = 0;
+        while (arg_idx < argc) {
+            if (strcmp(argv[arg_idx], "--json") == 0) {
+                json_mode = true;
+            } else if (strcmp(argv[arg_idx], "--focus") == 0) {
+                if (arg_idx + 1 < argc) {
+                    focus_id = (uint32_t)atoi(argv[++arg_idx]);
+                }
+            }
+            arg_idx++;
+        }
+        if (focus_id > 0) {
+            if (json_mode) {
+                char buf[65536];
+                if (sting_state_focused_to_json(&st, focus_id, buf, sizeof(buf))) {
+                    printf("%s\n", buf);
+                }
+            } else {
+                sting_state_print_focused(&st, focus_id);
+            }
+        } else {
+            if (json_mode) {
+                char buf[65536];
+                if (sting_state_to_json(&st, buf, sizeof(buf))) {
+                    printf("%s\n", buf);
+                }
+            } else {
+                sting_state_print_board(&st);
+            }
         }
         return 0;
     }
 
     if (strcmp(cmd, "export") == 0) {
+        uint32_t focus_id = 0;
+        while (arg_idx < argc) {
+            if (strcmp(argv[arg_idx], "--focus") == 0) {
+                if (arg_idx + 1 < argc) {
+                    focus_id = (uint32_t)atoi(argv[++arg_idx]);
+                }
+            }
+            arg_idx++;
+        }
         char buf[65536];
-        if (sting_state_to_json(&st, buf, sizeof(buf))) {
-            printf("%s\n", buf);
+        if (focus_id > 0) {
+            if (sting_state_focused_to_json(&st, focus_id, buf, sizeof(buf))) {
+                printf("%s\n", buf);
+            }
+        } else {
+            if (sting_state_to_json(&st, buf, sizeof(buf))) {
+                printf("%s\n", buf);
+            }
         }
         return 0;
     }

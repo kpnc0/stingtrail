@@ -1,0 +1,26 @@
+{
+  "115": {
+    "target": "H1: Atomic execution hook (stingtrail exec) prevents agent compliance drift and eliminates un-guarded command execution compared to advisory CLI",
+    "full_tokens": 6876,
+    "hourglass_tokens": 211,
+    "reduction_pct": 96.9,
+    "latency_ms": 0.027,
+    "sample_snippet": "=== STINGTRAIL EXPERIMENT CONTEXT (Focused on #115) ===\n\n[MOTIVATING ANCESTORS / CONTEXT SPINE]:\n  [#112] (premise) Stingtrail Evolution: Agent Epistemic Rigor & Execution Architecture\n\n[FOCUSED TARGET]:\n  [#115] (hypothesis) H1: Atomic execution hook (stingtrail exec) prevents agent compliance drift and eliminates un-guarded command execution comp"
+  },
+  "119": {
+    "target": "Simulate Advisory vs Atomic Execution Hook agent behaviors",
+    "full_tokens": 6876,
+    "hourglass_tokens": 203,
+    "reduction_pct": 97.0,
+    "latency_ms": 0.021,
+    "sample_snippet": "=== STINGTRAIL EXPERIMENT CONTEXT (Focused on #119) ===\n\n[MOTIVATING ANCESTORS / CONTEXT SPINE]:\n  [#112] (premise) Stingtrail Evolution: Agent Epistemic Rigor & Execution Architecture\n  -> [#115] (hypothesis) H1: Atomic execution hook (stingtrail exec) prevents agent compliance drift and eliminates un-guarded command execution compared to advisory"
+  },
+  "134": {
+    "target": "Persistent Background Watcher & Active Epistemic Shell Interceptor",
+    "full_tokens": 6876,
+    "hourglass_tokens": 918,
+    "reduction_pct": 86.6,
+    "latency_ms": 0.033,
+    "sample_snippet": "=== STINGTRAIL EXPERIMENT CONTEXT (Focused on #134) ===\n\n[MOTIVATING ANCESTORS / CONTEXT SPINE]:\n  (Target is a root node)\n\n[FOCUSED TARGET]:\n  [#134] (premise) Persistent Background Watcher & Active Epistemic Shell Interceptor\n\n[EPISTEMIC SUBTREE / OUTCOMES]:\n  [#135] (observation) Agents frequently drop into unguided exploratory loops without set"
+  }
+}

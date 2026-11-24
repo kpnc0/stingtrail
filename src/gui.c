@@ -19,6 +19,9 @@ static Rid g_current_window = R_INVALID_ID;
 static Rid g_current_graph = R_INVALID_ID;
 static sting_state_t *g_current_state = NULL;
 static int g_context_rnode = 0;
+static uint32_t g_focus_id = 0;
+static Rid g_menu_item_see_only_this = R_INVALID_ID;
+static Rid g_menu_item_see_all = R_INVALID_ID;
 
 /* Camera smooth animation state */
 typedef struct {
@@ -320,6 +323,50 @@ static void on_go_to_first_child_clicked(Rid item, void *user_data) {
     }
 }
 
+void sting_gui_focus_node(Rid graph, sting_state_t *st, uint32_t focus_id) {
+    if (focus_id == 0) return;
+    g_focus_id = focus_id;
+    if (graph == R_INVALID_ID) graph = g_current_graph;
+    if (!st) st = g_current_state;
+    if (graph != R_INVALID_ID && st) {
+        Rnode_graph_clear(graph);
+        sting_gui_build_dag(graph, st);
+        Rnode_graph_frame_all(graph);
+    }
+}
+
+void sting_gui_reset_focus(Rid graph, sting_state_t *st) {
+    g_focus_id = 0;
+    if (graph == R_INVALID_ID) graph = g_current_graph;
+    if (!st) st = g_current_state;
+    if (graph != R_INVALID_ID && st) {
+        Rnode_graph_clear(graph);
+        sting_gui_build_dag(graph, st);
+        Rnode_graph_frame_all(graph);
+    }
+}
+
+uint32_t sting_gui_get_focus_id(void) {
+    return g_focus_id;
+}
+
+Rid sting_gui_get_see_only_this_menu_item(void) { return g_menu_item_see_only_this; }
+Rid sting_gui_get_see_all_menu_item(void) { return g_menu_item_see_all; }
+
+static void on_see_only_this_clicked(Rid item, void *user_data) {
+    (void)item; (void)user_data;
+    int target = (g_context_rnode != 0) ? g_context_rnode : (g_gui_ctx ? g_gui_ctx->selected_rnode : 0);
+    sting_gui_item_t *it = find_item_by_rnode(target);
+    if (it && it->id != 0) {
+        sting_gui_focus_node(g_current_graph, g_current_state, it->id);
+    }
+}
+
+static void on_see_all_clicked(Rid item, void *user_data) {
+    (void)item; (void)user_data;
+    sting_gui_reset_focus(g_current_graph, g_current_state);
+}
+
 void sting_gui_set_vertical_view(bool enabled) {
     g_vertical_view = enabled;
     if (g_menu_item_vertical != R_INVALID_ID) {
@@ -426,6 +473,12 @@ static void on_graph_context_menu(Rid graph, int node, float x, float y, void *u
     if (g_menu_item_random_child != R_INVALID_ID) {
         Rwidget_set_enabled(g_menu_item_random_child, child_count > 0 ? 1 : 0);
     }
+    if (g_menu_item_see_only_this != R_INVALID_ID) {
+        Rwidget_set_enabled(g_menu_item_see_only_this, (node != 0) ? 1 : 0);
+    }
+    if (g_menu_item_see_all != R_INVALID_ID) {
+        Rwidget_set_enabled(g_menu_item_see_all, (g_focus_id != 0) ? 1 : 0);
+    }
 
     if (g_context_menu != R_INVALID_ID && win != R_INVALID_ID) {
         Rmenu_open(g_context_menu, win, x, y);
@@ -463,6 +516,13 @@ Rid sting_gui_create_context_menu(Rid window, Rid graph, sting_state_t *st) {
     Rmenu_add_separator(g_context_menu);
     Rid item_frame = Rmenu_add_item(g_context_menu, "Center / Frame All");
     Rmenu_item_set_clicked_callback(item_frame, on_frame_all_clicked, NULL);
+
+    Rmenu_add_separator(g_context_menu);
+    g_menu_item_see_only_this = Rmenu_add_item(g_context_menu, "See only this");
+    Rmenu_item_set_clicked_callback(g_menu_item_see_only_this, on_see_only_this_clicked, NULL);
+
+    g_menu_item_see_all = Rmenu_add_item(g_context_menu, "See all");
+    Rmenu_item_set_clicked_callback(g_menu_item_see_all, on_see_all_clicked, NULL);
 
     if (graph != R_INVALID_ID) {
         Rwidget_set_context_menu(graph, g_context_menu);
@@ -825,11 +885,74 @@ void sting_gui_cleanup_context(void) {
     }
 }
 
+static bool is_in_reach(uint32_t id, const uint32_t *arr, size_t count, uint32_t focus_id) {
+    if (focus_id == 0) return true;
+    for (size_t i = 0; i < count; i++) {
+        if (arr[i] == id) return true;
+    }
+    return false;
+}
+
 int sting_gui_build_dag(Rid graph, sting_state_t *st) {
     if (!st || graph == R_INVALID_ID) return 0;
 
     size_t total_items = st->node_count + st->entry_count + st->step_count;
     if (total_items == 0) return 0;
+
+    /* Compute reachability if focused subtree filter is active */
+    uint32_t reachable[1024];
+    size_t reach_count = 0;
+    if (g_focus_id != 0) {
+        reachable[reach_count++] = g_focus_id;
+        for (int pass = 0; pass < 32; pass++) {
+            bool added = false;
+            for (size_t i = 0; i < st->entry_count; i++) {
+                uint32_t id = st->entries[i].id;
+                uint32_t pid = st->entries[i].parent_id;
+                bool has = false;
+                for (size_t k = 0; k < reach_count; k++) { if (reachable[k] == id) { has = true; break; } }
+                if (has) continue;
+                for (size_t k = 0; k < reach_count; k++) {
+                    if (reachable[k] == pid) {
+                        if (reach_count < 1024) { reachable[reach_count++] = id; added = true; }
+                        break;
+                    }
+                }
+            }
+            for (size_t i = 0; i < st->step_count; i++) {
+                uint32_t id = st->steps[i].id;
+                uint32_t pid = st->steps[i].parent_id;
+                bool has = false;
+                for (size_t k = 0; k < reach_count; k++) { if (reachable[k] == id) { has = true; break; } }
+                if (has) continue;
+                for (size_t k = 0; k < reach_count; k++) {
+                    if (reachable[k] == pid) {
+                        if (reach_count < 1024) { reachable[reach_count++] = id; added = true; }
+                        break;
+                    }
+                }
+            }
+            if (!added) break;
+        }
+    }
+
+    size_t matching_items = 0;
+    for (size_t i = 0; i < st->node_count; i++) {
+        if (is_in_reach(st->nodes[i].id, reachable, reach_count, g_focus_id)) matching_items++;
+    }
+    for (size_t i = 0; i < st->entry_count; i++) {
+        if (is_in_reach(st->entries[i].id, reachable, reach_count, g_focus_id)) matching_items++;
+    }
+    for (size_t i = 0; i < st->step_count; i++) {
+        if (is_in_reach(st->steps[i].id, reachable, reach_count, g_focus_id)) matching_items++;
+    }
+
+    if (matching_items == 0) {
+        g_focus_id = 0;
+        matching_items = total_items;
+    }
+
+    total_items = matching_items;
 
     if (g_gui_ctx) sting_gui_cleanup_context();
 
@@ -851,7 +974,8 @@ int sting_gui_build_dag(Rid graph, sting_state_t *st) {
     sting_gui_item_t *items = g_gui_ctx->items;
     size_t idx = 0;
 
-    for (size_t i = 0; i < st->node_count; i++, idx++) {
+    for (size_t i = 0; i < st->node_count; i++) {
+        if (!is_in_reach(st->nodes[i].id, reachable, reach_count, g_focus_id)) continue;
         items[idx].id = st->nodes[i].id;
         items[idx].parent_id = 0;
         items[idx].depth = 0;
@@ -862,11 +986,13 @@ int sting_gui_build_dag(Rid graph, sting_state_t *st) {
         items[idx].orig_badge_r = 0.0f;
         items[idx].orig_badge_g = 0.0f;
         items[idx].orig_badge_b = 0.0f;
+        idx++;
     }
-    for (size_t i = 0; i < st->entry_count; i++, idx++) {
+    for (size_t i = 0; i < st->entry_count; i++) {
+        if (!is_in_reach(st->entries[i].id, reachable, reach_count, g_focus_id)) continue;
         items[idx].id = st->entries[i].id;
-        items[idx].parent_id = st->entries[i].parent_id;
-        items[idx].depth = (st->entries[i].parent_id == 0) ? 0 : 1;
+        items[idx].parent_id = (st->entries[i].id == g_focus_id) ? 0 : st->entries[i].parent_id;
+        items[idx].depth = (items[idx].parent_id == 0) ? 0 : 1;
         items[idx].highlighted = 1;
         items[idx].orig_r = 0.08f;
         items[idx].orig_g = 0.08f;
@@ -874,11 +1000,13 @@ int sting_gui_build_dag(Rid graph, sting_state_t *st) {
         items[idx].orig_badge_r = 0.12f;
         items[idx].orig_badge_g = 0.12f;
         items[idx].orig_badge_b = 0.12f;
+        idx++;
     }
-    for (size_t i = 0; i < st->step_count; i++, idx++) {
+    for (size_t i = 0; i < st->step_count; i++) {
+        if (!is_in_reach(st->steps[i].id, reachable, reach_count, g_focus_id)) continue;
         items[idx].id = st->steps[i].id;
-        items[idx].parent_id = st->steps[i].parent_id;
-        items[idx].depth = (st->steps[i].parent_id == 0) ? 0 : 2;
+        items[idx].parent_id = (st->steps[i].id == g_focus_id) ? 0 : st->steps[i].parent_id;
+        items[idx].depth = (items[idx].parent_id == 0) ? 0 : 2;
         items[idx].highlighted = 1;
         items[idx].orig_r = 0.05f;
         items[idx].orig_g = 0.05f;
@@ -886,29 +1014,18 @@ int sting_gui_build_dag(Rid graph, sting_state_t *st) {
         items[idx].orig_badge_r = 0.10f;
         items[idx].orig_badge_g = 0.10f;
         items[idx].orig_badge_b = 0.10f;
+        idx++;
     }
 
     /* Iterative topological depth calculation */
     for (int iter = 0; iter < 30; iter++) {
         bool changed = false;
-        idx = st->node_count;
-        for (size_t i = 0; i < st->entry_count; i++, idx++) {
-            uint32_t pid = items[idx].parent_id;
+        for (size_t i = 0; i < total_items; i++) {
+            uint32_t pid = items[i].parent_id;
             if (pid == 0) continue;
             for (size_t j = 0; j < total_items; j++) {
-                if (items[j].id == pid && items[idx].depth <= items[j].depth) {
-                    items[idx].depth = items[j].depth + 1;
-                    changed = true;
-                    break;
-                }
-            }
-        }
-        for (size_t i = 0; i < st->step_count; i++, idx++) {
-            uint32_t pid = items[idx].parent_id;
-            if (pid == 0) continue;
-            for (size_t j = 0; j < total_items; j++) {
-                if (items[j].id == pid && items[idx].depth <= items[j].depth) {
-                    items[idx].depth = items[j].depth + 1;
+                if (items[j].id == pid && items[i].depth <= items[j].depth) {
+                    items[i].depth = items[j].depth + 1;
                     changed = true;
                     break;
                 }
@@ -922,126 +1039,148 @@ int sting_gui_build_dag(Rid graph, sting_state_t *st) {
     Rnode_graph_set_type_color(graph, "flow", 1.0f, 1.0f, 1.0f);
     Rnode_graph_set_type_style(graph, "flow", "LinkShape", "Step");
 
-    idx = 0;
-    /* 1. Add Nodes */
-    for (size_t i = 0; i < st->node_count; i++, idx++) {
-        char prefix[64];
-        snprintf(prefix, sizeof(prefix), "[%s]", st->nodes[i].kind);
-        char title[180];
-        format_card_title(title, sizeof(title), prefix, st->nodes[i].name, 45);
+    /* Add node cards into Raven graph */
+    for (size_t i = 0; i < total_items; i++) {
+        uint32_t cid = items[i].id;
 
-        int rn = Rnode_graph_add_node(graph, title, 0, 0);
-        Rnode_graph_set_node_color(graph, rn, items[idx].orig_r, items[idx].orig_g, items[idx].orig_b);
+        /* 1. Node check */
+        const sting_node_t *node_ptr = NULL;
+        for (size_t n = 0; n < st->node_count; n++) {
+            if (st->nodes[n].id == cid) { node_ptr = &st->nodes[n]; break; }
+        }
+        if (node_ptr) {
+            char prefix[64];
+            snprintf(prefix, sizeof(prefix), "[%s]", node_ptr->kind);
+            char title[180];
+            format_card_title(title, sizeof(title), prefix, node_ptr->name, 45);
 
-        char badge[32];
-        snprintf(badge, sizeof(badge), "#%u", st->nodes[i].id);
-        Rnode_graph_set_node_badge(graph, rn, badge);
-        Rnode_graph_set_node_badge_color(graph, rn, items[idx].orig_badge_r, items[idx].orig_badge_g, items[idx].orig_badge_b);
+            int rn = Rnode_graph_add_node(graph, title, 0, 0);
+            Rnode_graph_set_node_color(graph, rn, items[i].orig_r, items[i].orig_g, items[i].orig_b);
 
-        items[idx].rnode = rn;
-        items[idx].out_pin = Rnode_graph_add_output(graph, rn, "out", "flow");
+            char badge[32];
+            snprintf(badge, sizeof(badge), "#%u", node_ptr->id);
+            Rnode_graph_set_node_badge(graph, rn, badge);
+            Rnode_graph_set_node_badge_color(graph, rn, items[i].orig_badge_r, items[i].orig_badge_g, items[i].orig_badge_b);
 
-        char raw_detail[1024];
-        snprintf(raw_detail, sizeof(raw_detail), "%s%s%s%sCreated: %s\nModified: %s",
-                 st->nodes[i].name,
-                 st->nodes[i].detail[0] ? "\n" : "",
-                 st->nodes[i].detail[0] ? st->nodes[i].detail : "",
-                 st->nodes[i].detail[0] ? "\n" : "\n",
-                 st->nodes[i].created[0] ? st->nodes[i].created : "-",
-                 st->nodes[i].modified[0] ? st->nodes[i].modified : "-");
-        char wrapped[1200];
-        wrap_text(raw_detail, wrapped, sizeof(wrapped), 48);
+            items[i].rnode = rn;
+            items[i].out_pin = Rnode_graph_add_output(graph, rn, "out", "flow");
 
-        Rid lbl = Rlabel_create(wrapped);
-        Rnode_graph_set_node_content(graph, rn, lbl);
-        Rnode_graph_get_node_size(graph, rn, &items[idx].w, &items[idx].h);
+            char raw_detail[1024];
+            snprintf(raw_detail, sizeof(raw_detail), "%s%s%s%sCreated: %s\nModified: %s",
+                     node_ptr->name,
+                     node_ptr->detail[0] ? "\n" : "",
+                     node_ptr->detail[0] ? node_ptr->detail : "",
+                     node_ptr->detail[0] ? "\n" : "\n",
+                     node_ptr->created[0] ? node_ptr->created : "-",
+                     node_ptr->modified[0] ? node_ptr->modified : "-");
+            char wrapped[1200];
+            wrap_text(raw_detail, wrapped, sizeof(wrapped), 48);
 
-        Rnode_graph_set_node_active(graph, rn, 1);
-        Rnode_graph_set_node_active_color(graph, rn, items[idx].glow_r, items[idx].glow_g, items[idx].glow_b);
-        Rnode_graph_set_node_style(graph, rn, "BorderColor", get_glow_border_color(items[idx].glow_type));
-        Rnode_graph_set_node_style(graph, rn, "Glow", "1");
-    }
+            Rid lbl = Rlabel_create(wrapped);
+            Rnode_graph_set_node_content(graph, rn, lbl);
+            Rnode_graph_get_node_size(graph, rn, &items[i].w, &items[i].h);
 
-    /* 2. Add Entries */
-    for (size_t i = 0; i < st->entry_count; i++, idx++) {
-        char prefix[64];
-        snprintf(prefix, sizeof(prefix), "[%s]", st->entries[i].kind);
-        char title[180];
-        format_card_title(title, sizeof(title), prefix, st->entries[i].summary, 45);
+            Rnode_graph_set_node_active(graph, rn, 1);
+            Rnode_graph_set_node_active_color(graph, rn, items[i].glow_r, items[i].glow_g, items[i].glow_b);
+            Rnode_graph_set_node_style(graph, rn, "BorderColor", get_glow_border_color(items[i].glow_type));
+            Rnode_graph_set_node_style(graph, rn, "Glow", "1");
+            continue;
+        }
 
-        int rn = Rnode_graph_add_node(graph, title, 0, 0);
-        Rnode_graph_set_node_color(graph, rn, items[idx].orig_r, items[idx].orig_g, items[idx].orig_b);
+        /* 2. Entry check */
+        const sting_entry_t *entry_ptr = NULL;
+        for (size_t e = 0; e < st->entry_count; e++) {
+            if (st->entries[e].id == cid) { entry_ptr = &st->entries[e]; break; }
+        }
+        if (entry_ptr) {
+            char prefix[64];
+            snprintf(prefix, sizeof(prefix), "[%s]", entry_ptr->kind);
+            char title[180];
+            format_card_title(title, sizeof(title), prefix, entry_ptr->summary, 45);
 
-        char badge[32];
-        snprintf(badge, sizeof(badge), "#%u [%s]", st->entries[i].id, st->entries[i].severity);
-        Rnode_graph_set_node_badge(graph, rn, badge);
-        Rnode_graph_set_node_badge_color(graph, rn, items[idx].orig_badge_r, items[idx].orig_badge_g, items[idx].orig_badge_b);
+            int rn = Rnode_graph_add_node(graph, title, 0, 0);
+            Rnode_graph_set_node_color(graph, rn, items[i].orig_r, items[i].orig_g, items[i].orig_b);
 
-        items[idx].rnode = rn;
-        items[idx].in_pin = Rnode_graph_add_input(graph, rn, "in", "flow");
-        items[idx].out_pin = Rnode_graph_add_output(graph, rn, "out", "flow");
+            char badge[32];
+            snprintf(badge, sizeof(badge), "#%u [%s]", entry_ptr->id, entry_ptr->severity);
+            Rnode_graph_set_node_badge(graph, rn, badge);
+            Rnode_graph_set_node_badge_color(graph, rn, items[i].orig_badge_r, items[i].orig_badge_g, items[i].orig_badge_b);
 
-        char raw_detail[1500];
-        snprintf(raw_detail, sizeof(raw_detail), "%s%s%s%sCreated: %s\nModified: %s",
-                 st->entries[i].summary,
-                 st->entries[i].detail[0] ? "\n" : "",
-                 st->entries[i].detail[0] ? st->entries[i].detail : "",
-                 st->entries[i].detail[0] ? "\n" : "\n",
-                 st->entries[i].created[0] ? st->entries[i].created : "-",
-                 st->entries[i].modified[0] ? st->entries[i].modified : "-");
-        char wrapped[1700];
-        wrap_text(raw_detail, wrapped, sizeof(wrapped), 48);
+            items[i].rnode = rn;
+            if (items[i].parent_id != 0) {
+                items[i].in_pin = Rnode_graph_add_input(graph, rn, "in", "flow");
+            }
+            items[i].out_pin = Rnode_graph_add_output(graph, rn, "out", "flow");
 
-        Rid lbl = Rlabel_create(wrapped);
-        Rnode_graph_set_node_content(graph, rn, lbl);
-        Rnode_graph_get_node_size(graph, rn, &items[idx].w, &items[idx].h);
+            char raw_detail[1500];
+            snprintf(raw_detail, sizeof(raw_detail), "%s%s%s%sCreated: %s\nModified: %s",
+                     entry_ptr->summary,
+                     entry_ptr->detail[0] ? "\n" : "",
+                     entry_ptr->detail[0] ? entry_ptr->detail : "",
+                     entry_ptr->detail[0] ? "\n" : "\n",
+                     entry_ptr->created[0] ? entry_ptr->created : "-",
+                     entry_ptr->modified[0] ? entry_ptr->modified : "-");
+            char wrapped[1700];
+            wrap_text(raw_detail, wrapped, sizeof(wrapped), 48);
 
-        Rnode_graph_set_node_active(graph, rn, 1);
-        Rnode_graph_set_node_active_color(graph, rn, items[idx].glow_r, items[idx].glow_g, items[idx].glow_b);
-        Rnode_graph_set_node_style(graph, rn, "BorderColor", get_glow_border_color(items[idx].glow_type));
-        Rnode_graph_set_node_style(graph, rn, "Glow", "1");
-    }
+            Rid lbl = Rlabel_create(wrapped);
+            Rnode_graph_set_node_content(graph, rn, lbl);
+            Rnode_graph_get_node_size(graph, rn, &items[i].w, &items[i].h);
 
-    /* 3. Add Steps */
-    for (size_t i = 0; i < st->step_count; i++, idx++) {
-        char prefix[64];
-        snprintf(prefix, sizeof(prefix), "[P%d]", st->steps[i].priority);
-        char title[180];
-        format_card_title(title, sizeof(title), prefix, st->steps[i].action, 45);
+            Rnode_graph_set_node_active(graph, rn, 1);
+            Rnode_graph_set_node_active_color(graph, rn, items[i].glow_r, items[i].glow_g, items[i].glow_b);
+            Rnode_graph_set_node_style(graph, rn, "BorderColor", get_glow_border_color(items[i].glow_type));
+            Rnode_graph_set_node_style(graph, rn, "Glow", "1");
+            continue;
+        }
 
-        int rn = Rnode_graph_add_node(graph, title, 0, 0);
-        Rnode_graph_set_node_color(graph, rn, items[idx].orig_r, items[idx].orig_g, items[idx].orig_b);
+        /* 3. Step check */
+        const sting_step_t *step_ptr = NULL;
+        for (size_t s = 0; s < st->step_count; s++) {
+            if (st->steps[s].id == cid) { step_ptr = &st->steps[s]; break; }
+        }
+        if (step_ptr) {
+            char prefix[64];
+            snprintf(prefix, sizeof(prefix), "[P%d]", step_ptr->priority);
+            char title[180];
+            format_card_title(title, sizeof(title), prefix, step_ptr->action, 45);
 
-        char badge[32];
-        snprintf(badge, sizeof(badge), "#%u [%s]", st->steps[i].id, st->steps[i].status);
-        Rnode_graph_set_node_badge(graph, rn, badge);
-        Rnode_graph_set_node_badge_color(graph, rn, items[idx].orig_badge_r, items[idx].orig_badge_g, items[idx].orig_badge_b);
+            int rn = Rnode_graph_add_node(graph, title, 0, 0);
+            Rnode_graph_set_node_color(graph, rn, items[i].orig_r, items[i].orig_g, items[i].orig_b);
 
-        items[idx].rnode = rn;
-        items[idx].in_pin = Rnode_graph_add_input(graph, rn, "in", "flow");
-        items[idx].out_pin = Rnode_graph_add_output(graph, rn, "out", "flow");
+            char badge[32];
+            snprintf(badge, sizeof(badge), "#%u [%s]", step_ptr->id, step_ptr->status);
+            Rnode_graph_set_node_badge(graph, rn, badge);
+            Rnode_graph_set_node_badge_color(graph, rn, items[i].orig_badge_r, items[i].orig_badge_g, items[i].orig_badge_b);
 
-        char raw_detail[2048];
-        snprintf(raw_detail, sizeof(raw_detail), "Action: %s\nWhy: %s%s%s%s%s\nCreated: %s\nModified: %s",
-                 st->steps[i].action,
-                 st->steps[i].rationale,
-                 st->steps[i].target[0] ? "\nTarget: " : "",
-                 st->steps[i].target[0] ? st->steps[i].target : "",
-                 st->steps[i].outcome[0] ? "\nOutcome: " : "",
-                 st->steps[i].outcome[0] ? st->steps[i].outcome : "",
-                 st->steps[i].created[0] ? st->steps[i].created : "-",
-                 st->steps[i].modified[0] ? st->steps[i].modified : "-");
-        char wrapped[2200];
-        wrap_text(raw_detail, wrapped, sizeof(wrapped), 48);
+            items[i].rnode = rn;
+            if (items[i].parent_id != 0) {
+                items[i].in_pin = Rnode_graph_add_input(graph, rn, "in", "flow");
+            }
+            items[i].out_pin = Rnode_graph_add_output(graph, rn, "out", "flow");
 
-        Rid lbl = Rlabel_create(wrapped);
-        Rnode_graph_set_node_content(graph, rn, lbl);
-        Rnode_graph_get_node_size(graph, rn, &items[idx].w, &items[idx].h);
+            char raw_detail[2048];
+            snprintf(raw_detail, sizeof(raw_detail), "Action: %s\nWhy: %s%s%s%s%s\nCreated: %s\nModified: %s",
+                     step_ptr->action,
+                     step_ptr->rationale,
+                     step_ptr->target[0] ? "\nTarget: " : "",
+                     step_ptr->target[0] ? step_ptr->target : "",
+                     step_ptr->outcome[0] ? "\nOutcome: " : "",
+                     step_ptr->outcome[0] ? step_ptr->outcome : "",
+                     step_ptr->created[0] ? step_ptr->created : "-",
+                     step_ptr->modified[0] ? step_ptr->modified : "-");
+            char wrapped[2200];
+            wrap_text(raw_detail, wrapped, sizeof(wrapped), 48);
 
-        Rnode_graph_set_node_active(graph, rn, 1);
-        Rnode_graph_set_node_active_color(graph, rn, items[idx].glow_r, items[idx].glow_g, items[idx].glow_b);
-        Rnode_graph_set_node_style(graph, rn, "BorderColor", get_glow_border_color(items[idx].glow_type));
-        Rnode_graph_set_node_style(graph, rn, "Glow", "1");
+            Rid lbl = Rlabel_create(wrapped);
+            Rnode_graph_set_node_content(graph, rn, lbl);
+            Rnode_graph_get_node_size(graph, rn, &items[i].w, &items[i].h);
+
+            Rnode_graph_set_node_active(graph, rn, 1);
+            Rnode_graph_set_node_active_color(graph, rn, items[i].glow_r, items[i].glow_g, items[i].glow_b);
+            Rnode_graph_set_node_style(graph, rn, "BorderColor", get_glow_border_color(items[i].glow_type));
+            Rnode_graph_set_node_style(graph, rn, "Glow", "1");
+        }
     }
 
     /* 4. Measure geometry */

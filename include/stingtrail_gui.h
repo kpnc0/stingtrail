@@ -72,6 +72,13 @@ void sting_gui_set_vertical_view(bool enabled);
 bool sting_gui_is_vertical_view(void);
 void sting_gui_toggle_vertical_view(Rid graph, sting_state_t *st);
 
+/* Subtree Focus Filtering ("See only this" / "See all") */
+void sting_gui_focus_node(Rid graph, sting_state_t *st, uint32_t focus_id);
+void sting_gui_reset_focus(Rid graph, sting_state_t *st);
+uint32_t sting_gui_get_focus_id(void);
+Rid sting_gui_get_see_only_this_menu_item(void);
+Rid sting_gui_get_see_all_menu_item(void);
+
 /* Context Menu (Read-Only: navigation and view controls only, NO mutations) */
 Rid sting_gui_create_context_menu(Rid window, Rid graph, sting_state_t *st);
 Rid sting_gui_get_context_menu(void);

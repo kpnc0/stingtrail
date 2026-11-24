@@ -74,13 +74,30 @@ Prints an ASCII status board grouping all planned, active, completed, and blocke
 ./build/stingtrail status
 ```
 
-#### 6. Export Full Graph (`export`)
-Exports the complete DAG (all nodes, reasoning entries, steps, and transitions) as compact, valid JSON to stdout.
+#### 6. Export Full or Focused Graph (`export`)
+Exports the complete DAG or a focused subtree (all nodes, reasoning entries, steps, and transitions) as compact, valid JSON to stdout.
 ```bash
+# Export full graph
 ./build/stingtrail export
+
+# Export focused experiment context for LLM ingestion
+./build/stingtrail export --focus <id>
 ```
 
-#### 7. Active Context Management (`context`)
+#### 7. Focused Experiment Context (`focus`)
+Extracts a compact, self-contained epistemic slice for an experiment or node using the **Hourglass Traversal** (motivating root-to-target ancestor spine + topological descendant outcomes).
+```bash
+# ASCII formatted context (motivating spine, target details, epistemic outcomes)
+./build/stingtrail focus <id>
+
+# Structured JSON for model prompting and analysis
+./build/stingtrail focus <id> --json
+
+# Also supported via status
+./build/stingtrail status --focus <id>
+```
+
+#### 8. Active Context Management (`context`)
 Manages the active hypothesis or premise pointer for the shell session, enabling automatic DAG parent attribution.
 ```bash
 # Check current active context
@@ -93,7 +110,7 @@ Manages the active hypothesis or premise pointer for the shell session, enabling
 ./build/stingtrail context clear
 ```
 
-#### 8. Synchronous Shell Interceptor Hook (`hook`)
+#### 9. Synchronous Shell Interceptor Hook (`hook`)
 Installs a zero-dependency, microsecond (`~1.18ms`) synchronous shell trap into an agent's `bash` or `zsh` session.
 ```bash
 # Evaluate hook in current shell
@@ -189,6 +206,9 @@ For visual inspection of mission graphs without altering state, `stingtrail-gui`
 
 ### Key Features
 - **Strictly Read-Only**: Disables all mutations, status transitions, and journal writes. Context menu and hotkeys only provide non-destructive viewing controls.
+- **Focused Subtree Isolation ("See only this" & "See all")**:
+  - Right-click any cell and select **"See only this"** to filter the graph strictly to that node and its descendants, re-anchoring the selected node as the root card (`depth 0, parent 0`).
+  - Right-click on empty canvas space and select **"See all"** to restore the complete mission graph view.
 - **Vim Navigation Keybindings**:
   - `h`: Go to immediate parent node
   - `j`: Go to next sibling node (forward)
@@ -226,6 +246,10 @@ stingtrail/
 │   ├── store.c                 # Append-only JSONL journal serialization & fsync
 │   ├── guard.c                 # Safety guard (destructive filter & scope check)
 │   └── json.c                  # Zero-dependency JSON string parser & serializer
+├── simulations/
+│   ├── runner.py                # Multi-agent behavioral simulator & stress tester
+│   ├── experiment_5_persistent_watcher.py # Shell hook vs daemon simulator
+│   └── experiment_6_context_traversal.py  # Empirical DAG traversal benchmark
 └── tests/
     ├── test_stingtrail.c        # Core CLI & DAG unit test suite
     ├── test_mcp.c               # MCP protocol & tool dispatch test suite

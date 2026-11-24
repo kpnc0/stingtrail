@@ -453,3 +453,358 @@ bool sting_context_clear(const char *journal_path) {
     unlink(path);
     return true;
 }
+
+void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
+    if (!st || target_id == 0) return;
+
+    /* 1. Locate target */
+    const sting_node_t *target_node = NULL;
+    const sting_entry_t *target_entry = NULL;
+    const sting_step_t *target_step = NULL;
+    uint32_t target_pid = 0;
+
+    for (size_t i = 0; i < st->node_count; i++) {
+        if (st->nodes[i].id == target_id) {
+            target_node = &st->nodes[i];
+            target_pid = 0;
+            break;
+        }
+    }
+    if (!target_node) {
+        for (size_t i = 0; i < st->entry_count; i++) {
+            if (st->entries[i].id == target_id) {
+                target_entry = &st->entries[i];
+                target_pid = st->entries[i].parent_id;
+                break;
+            }
+        }
+    }
+    if (!target_node && !target_entry) {
+        for (size_t i = 0; i < st->step_count; i++) {
+            if (st->steps[i].id == target_id) {
+                target_step = &st->steps[i];
+                target_pid = st->steps[i].parent_id;
+                break;
+            }
+        }
+    }
+
+    if (!target_node && !target_entry && !target_step) {
+        fprintf(stderr, "error: id #%u not found in graph\n", target_id);
+        return;
+    }
+
+    printf("=== STINGTRAIL // FOCUSED EXPERIMENT CONTEXT (#%u) ===\n\n", target_id);
+
+    /* 2. Trace Ancestor Spine (Root -> Target) */
+    uint32_t spine[64];
+    size_t spine_count = 0;
+    uint32_t cur_p = target_pid;
+    while (cur_p != 0 && spine_count < 64) {
+        spine[spine_count++] = cur_p;
+        uint32_t next_p = 0;
+        for (size_t i = 0; i < st->node_count; i++) {
+            if (st->nodes[i].id == cur_p) { next_p = 0; break; }
+        }
+        if (next_p == 0) {
+            for (size_t i = 0; i < st->entry_count; i++) {
+                if (st->entries[i].id == cur_p) { next_p = st->entries[i].parent_id; break; }
+            }
+        }
+        if (next_p == 0) {
+            for (size_t i = 0; i < st->step_count; i++) {
+                if (st->steps[i].id == cur_p) { next_p = st->steps[i].parent_id; break; }
+            }
+        }
+        cur_p = next_p;
+    }
+
+    printf("Motivating Lineage Spine:\n");
+    if (spine_count == 0) {
+        printf("  (Target is a root premise node)\n");
+    } else {
+        for (size_t k = spine_count; k > 0; k--) {
+            uint32_t anc = spine[k - 1];
+            size_t depth = spine_count - k;
+            char indent[128];
+            indent[0] = '\0';
+            for (size_t d = 0; d < depth; d++) strcat(indent, "  ");
+            if (depth > 0) strcat(indent, "-> ");
+            else strcat(indent, "  ");
+
+            bool printed = false;
+            for (size_t i = 0; i < st->node_count; i++) {
+                if (st->nodes[i].id == anc) {
+                    printf("%s[#%u] (%s) %s\n", indent, anc, st->nodes[i].kind, st->nodes[i].name);
+                    printed = true;
+                    break;
+                }
+            }
+            if (!printed) {
+                for (size_t i = 0; i < st->entry_count; i++) {
+                    if (st->entries[i].id == anc) {
+                        printf("%s[#%u] (%s) %s\n", indent, anc, st->entries[i].kind, st->entries[i].summary);
+                        printed = true;
+                        break;
+                    }
+                }
+            }
+            if (!printed) {
+                for (size_t i = 0; i < st->step_count; i++) {
+                    if (st->steps[i].id == anc) {
+                        printf("%s[#%u] [P%d][%s] %s\n", indent, anc, st->steps[i].priority, st->steps[i].status, st->steps[i].action);
+                        printed = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /* 3. Target Node Details */
+    printf("\nTarget Node (#%u):\n", target_id);
+    if (target_node) {
+        printf("  Kind: %s\n", target_node->kind);
+        printf("  Name: %s\n", target_node->name);
+        if (target_node->detail[0]) printf("  Detail: %s\n", target_node->detail);
+        printf("  Created: %s\n", target_node->created);
+    } else if (target_entry) {
+        printf("  Kind: %s (sev: %s)\n", target_entry->kind, target_entry->severity);
+        printf("  Summary: %s\n", target_entry->summary);
+        if (target_entry->detail[0]) printf("  Detail: %s\n", target_entry->detail);
+        printf("  Created: %s\n", target_entry->created);
+    } else if (target_step) {
+        printf("  Priority: P%d | Status: %s\n", target_step->priority, target_step->status);
+        printf("  Action: %s\n", target_step->action);
+        printf("  Rationale: %s\n", target_step->rationale);
+        if (target_step->outcome[0]) printf("  Outcome: %s\n", target_step->outcome);
+        printf("  Created: %s | Modified: %s\n", target_step->created, target_step->modified);
+    }
+
+    /* 4. Descendants Subtree (Topological DFS) */
+    printf("\nEpistemic Subtree / Outcomes:\n");
+    uint32_t reach[512];
+    size_t reach_cnt = 0;
+    reach[reach_cnt++] = target_id;
+    for (int pass = 0; pass < 32; pass++) {
+        bool added = false;
+        for (size_t i = 0; i < st->entry_count; i++) {
+            uint32_t id = st->entries[i].id;
+            uint32_t pid = st->entries[i].parent_id;
+            bool has = false;
+            for (size_t k = 0; k < reach_cnt; k++) { if (reach[k] == id) { has = true; break; } }
+            if (has) continue;
+            for (size_t k = 0; k < reach_cnt; k++) {
+                if (reach[k] == pid) {
+                    if (reach_cnt < 512) { reach[reach_cnt++] = id; added = true; }
+                    break;
+                }
+            }
+        }
+        for (size_t i = 0; i < st->step_count; i++) {
+            uint32_t id = st->steps[i].id;
+            uint32_t pid = st->steps[i].parent_id;
+            bool has = false;
+            for (size_t k = 0; k < reach_cnt; k++) { if (reach[k] == id) { has = true; break; } }
+            if (has) continue;
+            for (size_t k = 0; k < reach_cnt; k++) {
+                if (reach[k] == pid) {
+                    if (reach_cnt < 512) { reach[reach_cnt++] = id; added = true; }
+                    break;
+                }
+            }
+        }
+        if (!added) break;
+    }
+
+    if (reach_cnt <= 1) {
+        printf("  (No descendant actions or evidence recorded yet)\n");
+    } else {
+        for (size_t r = 1; r < reach_cnt; r++) {
+            uint32_t id = reach[r];
+            for (size_t i = 0; i < st->entry_count; i++) {
+                if (st->entries[i].id == id) {
+                    printf("  [#%u <- #%u] [%s/%s] %s\n",
+                           id, st->entries[i].parent_id, st->entries[i].kind, st->entries[i].severity, st->entries[i].summary);
+                    if (st->entries[i].detail[0]) {
+                        printf("      detail: %s\n", st->entries[i].detail);
+                    }
+                    break;
+                }
+            }
+            for (size_t i = 0; i < st->step_count; i++) {
+                if (st->steps[i].id == id) {
+                    printf("  [#%u <- #%u] [P%d][%s] %s\n",
+                           id, st->steps[i].parent_id, st->steps[i].priority, st->steps[i].status, st->steps[i].action);
+                    printf("      why: %s\n", st->steps[i].rationale);
+                    if (st->steps[i].outcome[0]) {
+                        printf("      outcome: %s\n", st->steps[i].outcome);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+}
+
+bool sting_state_focused_to_json(const sting_state_t *st, uint32_t target_id, char *out_buf, size_t out_cap) {
+    if (!st || target_id == 0 || !out_buf || out_cap == 0) return false;
+
+    sting_buf_t b;
+    sting_buf_init(&b, out_buf, out_cap);
+
+    sting_buf_append(&b, "{\"version\":\"" STINGTRAIL_VERSION "\",\"traversal\":\"hourglass_v1\",\"target_id\":");
+    sting_buf_append_int(&b, (long long)target_id);
+
+    /* Ancestors */
+    uint32_t target_pid = 0;
+    for (size_t i = 0; i < st->node_count; i++) {
+        if (st->nodes[i].id == target_id) { target_pid = 0; break; }
+    }
+    if (target_pid == 0) {
+        for (size_t i = 0; i < st->entry_count; i++) {
+            if (st->entries[i].id == target_id) { target_pid = st->entries[i].parent_id; break; }
+        }
+    }
+    if (target_pid == 0) {
+        for (size_t i = 0; i < st->step_count; i++) {
+            if (st->steps[i].id == target_id) { target_pid = st->steps[i].parent_id; break; }
+        }
+    }
+
+    uint32_t spine[64];
+    size_t spine_count = 0;
+    uint32_t cur_p = target_pid;
+    while (cur_p != 0 && spine_count < 64) {
+        spine[spine_count++] = cur_p;
+        uint32_t next_p = 0;
+        for (size_t i = 0; i < st->entry_count; i++) {
+            if (st->entries[i].id == cur_p) { next_p = st->entries[i].parent_id; break; }
+        }
+        if (next_p == 0) {
+            for (size_t i = 0; i < st->step_count; i++) {
+                if (st->steps[i].id == cur_p) { next_p = st->steps[i].parent_id; break; }
+            }
+        }
+        cur_p = next_p;
+    }
+
+    sting_buf_append(&b, ",\"ancestor_ids\":[");
+    for (size_t k = spine_count; k > 0; k--) {
+        if (k < spine_count) sting_buf_append_ch(&b, ',');
+        uint32_t anc = spine[k - 1];
+        sting_buf_append_int(&b, (long long)anc);
+    }
+    sting_buf_append(&b, "]");
+
+    /* Combined Hourglass set: spine (ancestors) + target + descendants */
+    uint32_t reach[512];
+    size_t reach_cnt = 0;
+    for (size_t k = 0; k < spine_count && reach_cnt < 512; k++) {
+        reach[reach_cnt++] = spine[k];
+    }
+    if (reach_cnt < 512) {
+        reach[reach_cnt++] = target_id;
+    }
+
+    for (int pass = 0; pass < 32; pass++) {
+        bool added = false;
+        for (size_t i = 0; i < st->entry_count; i++) {
+            uint32_t id = st->entries[i].id;
+            uint32_t pid = st->entries[i].parent_id;
+            bool has = false;
+            for (size_t k = 0; k < reach_cnt; k++) { if (reach[k] == id) { has = true; break; } }
+            if (has) continue;
+            for (size_t k = 0; k < reach_cnt; k++) {
+                if (reach[k] == pid) {
+                    if (reach_cnt < 512) { reach[reach_cnt++] = id; added = true; }
+                    break;
+                }
+            }
+        }
+        for (size_t i = 0; i < st->step_count; i++) {
+            uint32_t id = st->steps[i].id;
+            uint32_t pid = st->steps[i].parent_id;
+            bool has = false;
+            for (size_t k = 0; k < reach_cnt; k++) { if (reach[k] == id) { has = true; break; } }
+            if (has) continue;
+            for (size_t k = 0; k < reach_cnt; k++) {
+                if (reach[k] == pid) {
+                    if (reach_cnt < 512) { reach[reach_cnt++] = id; added = true; }
+                    break;
+                }
+            }
+        }
+        if (!added) break;
+    }
+
+    sting_buf_append(&b, ",\"nodes\":[");
+    bool first_node = true;
+    for (size_t i = 0; i < st->node_count; i++) {
+        bool in_r = false;
+        for (size_t k = 0; k < reach_cnt; k++) { if (reach[k] == st->nodes[i].id) { in_r = true; break; } }
+        if (!in_r) continue;
+        if (!first_node) sting_buf_append_ch(&b, ',');
+        first_node = false;
+        sting_buf_append(&b, "{\"id\":");
+        sting_buf_append_int(&b, (long long)st->nodes[i].id);
+        sting_buf_append(&b, ",\"kind\":");
+        sting_buf_append_json_str(&b, st->nodes[i].kind);
+        sting_buf_append(&b, ",\"name\":");
+        sting_buf_append_json_str(&b, st->nodes[i].name);
+        sting_buf_append(&b, ",\"detail\":");
+        sting_buf_append_json_str(&b, st->nodes[i].detail);
+        sting_buf_append_ch(&b, '}');
+    }
+
+    sting_buf_append(&b, "],\"entries\":[");
+    bool first_entry = true;
+    for (size_t i = 0; i < st->entry_count; i++) {
+        bool in_r = false;
+        for (size_t k = 0; k < reach_cnt; k++) { if (reach[k] == st->entries[i].id) { in_r = true; break; } }
+        if (!in_r) continue;
+        if (!first_entry) sting_buf_append_ch(&b, ',');
+        first_entry = false;
+        sting_buf_append(&b, "{\"id\":");
+        sting_buf_append_int(&b, (long long)st->entries[i].id);
+        sting_buf_append(&b, ",\"parent_id\":");
+        sting_buf_append_int(&b, (long long)st->entries[i].parent_id);
+        sting_buf_append(&b, ",\"kind\":");
+        sting_buf_append_json_str(&b, st->entries[i].kind);
+        sting_buf_append(&b, ",\"severity\":");
+        sting_buf_append_json_str(&b, st->entries[i].severity);
+        sting_buf_append(&b, ",\"summary\":");
+        sting_buf_append_json_str(&b, st->entries[i].summary);
+        sting_buf_append(&b, ",\"detail\":");
+        sting_buf_append_json_str(&b, st->entries[i].detail);
+        sting_buf_append_ch(&b, '}');
+    }
+
+    sting_buf_append(&b, "],\"steps\":[");
+    bool first_step = true;
+    for (size_t i = 0; i < st->step_count; i++) {
+        bool in_r = false;
+        for (size_t k = 0; k < reach_cnt; k++) { if (reach[k] == st->steps[i].id) { in_r = true; break; } }
+        if (!in_r) continue;
+        if (!first_step) sting_buf_append_ch(&b, ',');
+        first_step = false;
+        sting_buf_append(&b, "{\"id\":");
+        sting_buf_append_int(&b, (long long)st->steps[i].id);
+        sting_buf_append(&b, ",\"parent_id\":");
+        sting_buf_append_int(&b, (long long)st->steps[i].parent_id);
+        sting_buf_append(&b, ",\"priority\":");
+        sting_buf_append_int(&b, st->steps[i].priority);
+        sting_buf_append(&b, ",\"status\":");
+        sting_buf_append_json_str(&b, st->steps[i].status);
+        sting_buf_append(&b, ",\"action\":");
+        sting_buf_append_json_str(&b, st->steps[i].action);
+        sting_buf_append(&b, ",\"rationale\":");
+        sting_buf_append_json_str(&b, st->steps[i].rationale);
+        sting_buf_append(&b, ",\"outcome\":");
+        sting_buf_append_json_str(&b, st->steps[i].outcome);
+        sting_buf_append_ch(&b, '}');
+    }
+
+    sting_buf_append(&b, "]}");
+    return !b.overflow;
+}
