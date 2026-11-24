@@ -1,0 +1,35 @@
+[
+  {
+    "model": "Monochrome (Current)",
+    "raw_bytes": 2540,
+    "plain_bytes": 2540,
+    "ansi_overhead_bytes": 0,
+    "overhead_percent": 0.0,
+    "ansi_sequence_count": 0,
+    "colored_text_ratio_pct": 0.0,
+    "contrast_hierarchy": "None (Monochrome flat)",
+    "human_scan_fatigue": "High (Linear text search required)"
+  },
+  {
+    "model": "Rainbow (Aggressive)",
+    "raw_bytes": 3476,
+    "plain_bytes": 2540,
+    "ansi_overhead_bytes": 936,
+    "overhead_percent": 36.85,
+    "ansi_sequence_count": 182,
+    "colored_text_ratio_pct": 93.7,
+    "contrast_hierarchy": "Chaotic / Over-saturated",
+    "human_scan_fatigue": "High (Visual clutter / sensory overload)"
+  },
+  {
+    "model": "Strategic Sparse (Proposed)",
+    "raw_bytes": 3098,
+    "plain_bytes": 2540,
+    "ansi_overhead_bytes": 558,
+    "overhead_percent": 21.97,
+    "ansi_sequence_count": 122,
+    "colored_text_ratio_pct": 39.57,
+    "contrast_hierarchy": "3-Tier (Anchor/Status/Muted)",
+    "human_scan_fatigue": "Low (Eyes instantly jump to IDs & Blocked/P1)"
+  }
+]

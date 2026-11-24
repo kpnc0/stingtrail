@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <time.h>
 
 #ifdef __cplusplus
@@ -122,6 +123,37 @@ uint32_t sting_state_plan_step(sting_state_t *st, uint32_t parent_id,
 bool sting_state_update_step(sting_state_t *st, uint32_t step_id,
                              const char *status, const char *outcome,
                              bool persist);
+
+/* Strategic Terminal Color Ergonomics */
+typedef struct {
+    bool enabled;
+    const char *reset;
+    const char *bold;
+    const char *dim;
+    const char *anchor;      /* Bold Cyan for node IDs [#123] and links [#123 <- #45] */
+    const char *p1;          /* Bold Red for [P1] */
+    const char *p2;          /* Yellow/Amber for [P2] */
+    const char *p3;          /* Blue for [P3] */
+    const char *plow;        /* Dim for [P4], [P5] */
+    const char *done;        /* Bold Green for [done] */
+    const char *in_progress; /* Bold Amber for [in_progress] */
+    const char *blocked;     /* Bold Red for [blocked] */
+    const char *pending;     /* Cyan for [pending] */
+    const char *hyp;         /* Bold Magenta for [hypothesis] */
+    const char *evi;         /* Bold Green for [evidence] */
+    const char *ref;         /* Bold Red for [refutation] */
+    const char *obs;         /* Cyan for [observation] */
+    const char *find;        /* Yellow for [finding] */
+} sting_color_t;
+
+sting_color_t sting_color_get(void);
+sting_color_t sting_color_get_for_stream(FILE *fp);
+void sting_color_set_mode(int mode); /* 0: auto (TTY & NO_COLOR), 1: always, 2: never */
+int sting_color_get_mode(void);
+const char *sting_color_status(const sting_color_t *c, const char *status);
+const char *sting_color_priority(const sting_color_t *c, int priority);
+const char *sting_color_kind(const sting_color_t *c, const char *kind);
+const char *sting_color_severity(const sting_color_t *c, const char *sev);
 
 /* Output & Serialization */
 bool sting_state_to_json(const sting_state_t *st, char *out_buf, size_t out_cap);

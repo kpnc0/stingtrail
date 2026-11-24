@@ -31,6 +31,8 @@ Stingtrail stores state in an append-only JSONL journal (`stingtrail.jsonl` by d
 ### Global Flags
 - `--db <file>`: Path to the JSONL journal database (default: `stingtrail.jsonl`).
 - `--scope <cidr_or_hosts>`: Comma-separated list of allowed IPs, CIDR blocks, or hostnames (e.g. `10.0.0.0/24,api.internal`). Enforces fail-closed scope validation on targets and commands.
+- `--color[=auto|always|never]`: Control strategic ANSI color output (default: `auto`, enabling colors when stdout is a TTY and `NO_COLOR` is unset).
+- `--no-color`: Disable all ANSI color escape sequences (respects [NO_COLOR](https://no-color.org)).
 
 ### Commands
 
@@ -249,7 +251,8 @@ stingtrail/
 ├── simulations/
 │   ├── runner.py                # Multi-agent behavioral simulator & stress tester
 │   ├── experiment_5_persistent_watcher.py # Shell hook vs daemon simulator
-│   └── experiment_6_context_traversal.py  # Empirical DAG traversal benchmark
+│   ├── experiment_6_context_traversal.py  # Empirical DAG traversal benchmark
+│   └── experiment_7_terminal_colors.py    # Terminal styling scannability benchmark
 └── tests/
     ├── test_stingtrail.c        # Core CLI & DAG unit test suite
     ├── test_mcp.c               # MCP protocol & tool dispatch test suite

@@ -379,6 +379,80 @@ TEST(state_focus_traversal_and_json) {
     sting_state_print_focused(&st, s1);
 }
 
+TEST(terminal_color_subsystem_and_no_color) {
+    /* 1. Never mode: All color strings are empty strings */
+    sting_color_set_mode(2);
+    ASSERT_EQ_INT(sting_color_get_mode(), 2);
+    sting_color_t c = sting_color_get();
+    ASSERT_FALSE(c.enabled);
+    ASSERT_STR_EQ(c.reset, "");
+    ASSERT_STR_EQ(c.bold, "");
+    ASSERT_STR_EQ(c.dim, "");
+    ASSERT_STR_EQ(c.anchor, "");
+    ASSERT_STR_EQ(c.p1, "");
+    ASSERT_STR_EQ(c.done, "");
+    ASSERT_STR_EQ(c.blocked, "");
+    ASSERT_STR_EQ(c.hyp, "");
+    ASSERT_STR_EQ(sting_color_status(&c, "done"), "");
+    ASSERT_STR_EQ(sting_color_status(&c, "blocked"), "");
+    ASSERT_STR_EQ(sting_color_priority(&c, 1), "");
+    ASSERT_STR_EQ(sting_color_kind(&c, "hypothesis"), "");
+    ASSERT_STR_EQ(sting_color_kind(&c, "evidence"), "");
+
+    /* 2. Always mode: ANSI escape codes present */
+    sting_color_set_mode(1);
+    ASSERT_EQ_INT(sting_color_get_mode(), 1);
+    c = sting_color_get();
+    ASSERT_TRUE(c.enabled);
+    ASSERT_STR_EQ(c.reset, "\033[0m");
+    ASSERT_STR_EQ(c.bold, "\033[1m");
+    ASSERT_STR_EQ(c.dim, "\033[2m");
+    ASSERT_STR_EQ(c.anchor, "\033[1;36m");
+    ASSERT_STR_EQ(c.p1, "\033[1;31m");
+    ASSERT_STR_EQ(c.p2, "\033[33m");
+    ASSERT_STR_EQ(c.p3, "\033[34m");
+    ASSERT_STR_EQ(c.done, "\033[1;32m");
+    ASSERT_STR_EQ(c.blocked, "\033[1;31m");
+    ASSERT_STR_EQ(c.in_progress, "\033[1;33m");
+    ASSERT_STR_EQ(c.pending, "\033[36m");
+    ASSERT_STR_EQ(c.hyp, "\033[1;35m");
+    ASSERT_STR_EQ(c.evi, "\033[1;32m");
+    ASSERT_STR_EQ(c.ref, "\033[1;31m");
+    ASSERT_STR_EQ(c.find, "\033[1;33m");
+    ASSERT_STR_EQ(c.obs, "\033[36m");
+
+    /* Helper functions return corresponding colors when enabled */
+    ASSERT_STR_EQ(sting_color_status(&c, "done"), "\033[1;32m");
+    ASSERT_STR_EQ(sting_color_status(&c, "blocked"), "\033[1;31m");
+    ASSERT_STR_EQ(sting_color_status(&c, "in_progress"), "\033[1;33m");
+    ASSERT_STR_EQ(sting_color_status(&c, "pending"), "\033[36m");
+
+    ASSERT_STR_EQ(sting_color_priority(&c, 1), "\033[1;31m");
+    ASSERT_STR_EQ(sting_color_priority(&c, 2), "\033[33m");
+    ASSERT_STR_EQ(sting_color_priority(&c, 3), "\033[34m");
+    ASSERT_STR_EQ(sting_color_priority(&c, 4), "\033[2m");
+
+    ASSERT_STR_EQ(sting_color_kind(&c, "hypothesis"), "\033[1;35m");
+    ASSERT_STR_EQ(sting_color_kind(&c, "evidence"), "\033[1;32m");
+    ASSERT_STR_EQ(sting_color_kind(&c, "refutation"), "\033[1;31m");
+    ASSERT_STR_EQ(sting_color_kind(&c, "observation"), "\033[36m");
+    ASSERT_STR_EQ(sting_color_kind(&c, "finding"), "\033[1;33m");
+
+    ASSERT_STR_EQ(sting_color_severity(&c, "critical"), "\033[1;31m");
+    ASSERT_STR_EQ(sting_color_severity(&c, "high"), "\033[1;31m");
+    ASSERT_STR_EQ(sting_color_severity(&c, "medium"), "\033[33m");
+    ASSERT_STR_EQ(sting_color_severity(&c, "low"), "\033[34m");
+    ASSERT_STR_EQ(sting_color_severity(&c, "info"), "\033[2m");
+
+    /* Stream auto-detection check */
+    sting_color_t c_stdout = sting_color_get_for_stream(stdout);
+    ASSERT_TRUE(c_stdout.enabled); /* mode 1 always */
+
+    /* 3. Auto mode reset */
+    sting_color_set_mode(0);
+    ASSERT_EQ_INT(sting_color_get_mode(), 0);
+}
+
 int main(void) {
     printf("=== Stingtrail Test Suite ===\n");
     RUN_TEST(json_buffer_and_escaping);
@@ -392,6 +466,7 @@ int main(void) {
     RUN_TEST(hook_semantic_classification_and_destructives);
     RUN_TEST(context_management_and_persistence);
     RUN_TEST(state_focus_traversal_and_json);
+    RUN_TEST(terminal_color_subsystem_and_no_color);
 
     printf("=== Result: %d/%d tests passed ===\n", g_tests_passed, g_tests_run);
     return (g_tests_passed == g_tests_run) ? 0 : 1;

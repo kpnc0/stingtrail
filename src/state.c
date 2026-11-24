@@ -275,63 +275,185 @@ bool sting_state_update_step(sting_state_t *st, uint32_t step_id,
     return true;
 }
 
+static int g_color_mode = 0; /* 0: auto, 1: always, 2: never */
+
+void sting_color_set_mode(int mode) {
+    g_color_mode = mode;
+}
+
+int sting_color_get_mode(void) {
+    return g_color_mode;
+}
+
+static bool should_use_color_fd(int fd) {
+    if (g_color_mode == 1) return true;
+    if (g_color_mode == 2) return false;
+
+    /* Respect standard NO_COLOR (https://no-color.org) */
+    const char *no_color = getenv("NO_COLOR");
+    if (no_color && no_color[0] != '\0') return false;
+
+    const char *term = getenv("TERM");
+    if (!term || strcmp(term, "dumb") == 0) return false;
+
+    return isatty(fd) != 0;
+}
+
+static sting_color_t sting_color_init_with_bool(bool enabled) {
+    sting_color_t c;
+    memset(&c, 0, sizeof(c));
+    c.enabled = enabled;
+
+    if (c.enabled) {
+        c.reset       = "\033[0m";
+        c.bold        = "\033[1m";
+        c.dim         = "\033[2m";
+        c.anchor      = "\033[1;36m";  /* Bold Cyan */
+        c.p1          = "\033[1;31m";  /* Bold Red */
+        c.p2          = "\033[33m";    /* Yellow */
+        c.p3          = "\033[34m";    /* Blue */
+        c.plow        = "\033[2m";     /* Dim */
+        c.done        = "\033[1;32m";  /* Bold Green */
+        c.in_progress = "\033[1;33m";  /* Bold Yellow */
+        c.blocked     = "\033[1;31m";  /* Bold Red */
+        c.pending     = "\033[36m";    /* Cyan */
+        c.hyp         = "\033[1;35m";  /* Bold Magenta */
+        c.evi         = "\033[1;32m";  /* Bold Green */
+        c.ref         = "\033[1;31m";  /* Bold Red */
+        c.obs         = "\033[36m";    /* Cyan */
+        c.find        = "\033[1;33m";  /* Bold Yellow */
+    } else {
+        c.reset       = "";
+        c.bold        = "";
+        c.dim         = "";
+        c.anchor      = "";
+        c.p1          = "";
+        c.p2          = "";
+        c.p3          = "";
+        c.plow        = "";
+        c.done        = "";
+        c.in_progress = "";
+        c.blocked     = "";
+        c.pending     = "";
+        c.hyp         = "";
+        c.evi         = "";
+        c.ref         = "";
+        c.obs         = "";
+        c.find        = "";
+    }
+    return c;
+}
+
+sting_color_t sting_color_get(void) {
+    return sting_color_init_with_bool(should_use_color_fd(1));
+}
+
+sting_color_t sting_color_get_for_stream(FILE *fp) {
+    int fd = fp ? fileno(fp) : 1;
+    return sting_color_init_with_bool(should_use_color_fd(fd));
+}
+
+const char *sting_color_status(const sting_color_t *c, const char *status) {
+    if (!c || !c->enabled || !status) return "";
+    if (strcmp(status, "done") == 0) return c->done;
+    if (strcmp(status, "blocked") == 0) return c->blocked;
+    if (strcmp(status, "in_progress") == 0) return c->in_progress;
+    if (strcmp(status, "pending") == 0) return c->pending;
+    return "";
+}
+
+const char *sting_color_priority(const sting_color_t *c, int priority) {
+    if (!c || !c->enabled) return "";
+    if (priority == 1) return c->p1;
+    if (priority == 2) return c->p2;
+    if (priority == 3) return c->p3;
+    return c->plow;
+}
+
+const char *sting_color_kind(const sting_color_t *c, const char *kind) {
+    if (!c || !c->enabled || !kind) return "";
+    if (strcmp(kind, "hypothesis") == 0) return c->hyp;
+    if (strcmp(kind, "evidence") == 0) return c->evi;
+    if (strcmp(kind, "refutation") == 0) return c->ref;
+    if (strcmp(kind, "finding") == 0) return c->find;
+    if (strcmp(kind, "observation") == 0) return c->obs;
+    return "";
+}
+
+const char *sting_color_severity(const sting_color_t *c, const char *sev) {
+    if (!c || !c->enabled || !sev) return "";
+    if (strcmp(sev, "critical") == 0) return c->blocked;
+    if (strcmp(sev, "high") == 0) return c->p1;
+    if (strcmp(sev, "medium") == 0) return c->p2;
+    if (strcmp(sev, "low") == 0) return c->p3;
+    if (strcmp(sev, "info") == 0) return c->dim;
+    return "";
+}
+
 void sting_state_print_board(const sting_state_t *st) {
     if (!st) return;
-    printf("=== STINGTRAIL // CRITICAL THINKING BOARD ===\n");
+    sting_color_t c = sting_color_get();
 
-    printf("Nodes (%zu):\n", st->node_count);
+    printf("%s=== STINGTRAIL // CRITICAL THINKING BOARD ===%s\n", c.bold, c.reset);
+
+    printf("%sNodes (%zu):%s\n", c.bold, st->node_count, c.reset);
     if (st->node_count == 0) {
         printf("  (none)\n");
     } else {
         for (size_t i = 0; i < st->node_count; i++) {
-            printf("  [#%u] (%s) %s%s%s (created: %s)\n",
-                   st->nodes[i].id,
+            printf("  %s[#%u]%s (%s) %s%s%s %s(created: %s)%s\n",
+                   c.anchor, st->nodes[i].id, c.reset,
                    st->nodes[i].kind,
                    st->nodes[i].name,
                    st->nodes[i].detail[0] ? " — " : "",
                    st->nodes[i].detail[0] ? st->nodes[i].detail : "",
-                   st->nodes[i].created[0] ? st->nodes[i].created : "-");
+                   c.dim, st->nodes[i].created[0] ? st->nodes[i].created : "-", c.reset);
         }
     }
 
-    printf("\nReasoning Log (%zu):\n", st->entry_count);
+    printf("\n%sReasoning Log (%zu):%s\n", c.bold, st->entry_count, c.reset);
     if (st->entry_count == 0) {
         printf("  (none)\n");
     } else {
         for (size_t i = 0; i < st->entry_count; i++) {
-            printf("  [#%u <- #%u] [%s/%s] %s%s%s (created: %s)\n",
-                   st->entries[i].id,
-                   st->entries[i].parent_id,
-                   st->entries[i].kind,
+            const char *k_col = sting_color_kind(&c, st->entries[i].kind);
+            printf("  %s[#%u <- #%u]%s [%s%s%s/%s] %s%s%s %s(created: %s)%s\n",
+                   c.anchor, st->entries[i].id, st->entries[i].parent_id, c.reset,
+                   k_col, st->entries[i].kind, c.reset,
                    st->entries[i].severity,
                    st->entries[i].summary,
                    st->entries[i].detail[0] ? " | " : "",
                    st->entries[i].detail[0] ? st->entries[i].detail : "",
-                   st->entries[i].created[0] ? st->entries[i].created : "-");
+                   c.dim, st->entries[i].created[0] ? st->entries[i].created : "-", c.reset);
         }
     }
 
-    printf("\nPlanned Next Steps (%zu):\n", st->step_count);
+    printf("\n%sPlanned Next Steps (%zu):%s\n", c.bold, st->step_count, c.reset);
     if (st->step_count == 0) {
         printf("  (none)\n");
     } else {
         /* Group and sort by priority P1 .. P5 */
         for (int p = 1; p <= 5; p++) {
+            const char *p_col = sting_color_priority(&c, p);
             for (size_t i = 0; i < st->step_count; i++) {
                 if (st->steps[i].priority != p) continue;
-                printf("  [#%u <- #%u] [P%d][%s] %s%s%s (created: %s, modified: %s)\n",
-                       st->steps[i].id,
-                       st->steps[i].parent_id,
-                       st->steps[i].priority,
-                       st->steps[i].status,
+                const char *s_col = sting_color_status(&c, st->steps[i].status);
+                printf("  %s[#%u <- #%u]%s [%sP%d%s][%s%s%s] %s%s%s%s%s %s(created: %s, modified: %s)%s\n",
+                       c.anchor, st->steps[i].id, st->steps[i].parent_id, c.reset,
+                       p_col, st->steps[i].priority, c.reset,
+                       s_col, st->steps[i].status, c.reset,
                        st->steps[i].action,
                        st->steps[i].target[0] ? " (target: " : "",
                        st->steps[i].target[0] ? st->steps[i].target : "",
+                       st->steps[i].target[0] ? ")" : "",
+                       "",
+                       c.dim,
                        st->steps[i].created[0] ? st->steps[i].created : "-",
-                       st->steps[i].modified[0] ? st->steps[i].modified : "-");
-                printf("      why: %s\n", st->steps[i].rationale);
+                       st->steps[i].modified[0] ? st->steps[i].modified : "-",
+                       c.reset);
+                printf("      %swhy:%s %s\n", c.dim, c.reset, st->steps[i].rationale);
                 if (st->steps[i].outcome[0]) {
-                    printf("      outcome: %s\n", st->steps[i].outcome);
+                    printf("      %soutcome:%s %s\n", c.dim, c.reset, st->steps[i].outcome);
                 }
             }
         }
@@ -494,7 +616,10 @@ void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
         return;
     }
 
-    printf("=== STINGTRAIL // FOCUSED EXPERIMENT CONTEXT (#%u) ===\n\n", target_id);
+    sting_color_t c = sting_color_get();
+
+    printf("%s=== STINGTRAIL // FOCUSED EXPERIMENT CONTEXT (%s#%u%s) ===%s\n\n",
+           c.bold, c.anchor, target_id, c.bold, c.reset);
 
     /* 2. Trace Ancestor Spine (Root -> Target) */
     uint32_t spine[64];
@@ -519,9 +644,9 @@ void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
         cur_p = next_p;
     }
 
-    printf("Motivating Lineage Spine:\n");
+    printf("%sMotivating Lineage Spine:%s\n", c.bold, c.reset);
     if (spine_count == 0) {
-        printf("  (Target is a root premise node)\n");
+        printf("  %s(Target is a root premise node)%s\n", c.dim, c.reset);
     } else {
         for (size_t k = spine_count; k > 0; k--) {
             uint32_t anc = spine[k - 1];
@@ -535,7 +660,7 @@ void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
             bool printed = false;
             for (size_t i = 0; i < st->node_count; i++) {
                 if (st->nodes[i].id == anc) {
-                    printf("%s[#%u] (%s) %s\n", indent, anc, st->nodes[i].kind, st->nodes[i].name);
+                    printf("%s%s[#%u]%s (%s) %s\n", indent, c.anchor, anc, c.reset, st->nodes[i].kind, st->nodes[i].name);
                     printed = true;
                     break;
                 }
@@ -543,7 +668,8 @@ void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
             if (!printed) {
                 for (size_t i = 0; i < st->entry_count; i++) {
                     if (st->entries[i].id == anc) {
-                        printf("%s[#%u] (%s) %s\n", indent, anc, st->entries[i].kind, st->entries[i].summary);
+                        const char *k_col = sting_color_kind(&c, st->entries[i].kind);
+                        printf("%s%s[#%u]%s (%s%s%s) %s\n", indent, c.anchor, anc, c.reset, k_col, st->entries[i].kind, c.reset, st->entries[i].summary);
                         printed = true;
                         break;
                     }
@@ -552,7 +678,13 @@ void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
             if (!printed) {
                 for (size_t i = 0; i < st->step_count; i++) {
                     if (st->steps[i].id == anc) {
-                        printf("%s[#%u] [P%d][%s] %s\n", indent, anc, st->steps[i].priority, st->steps[i].status, st->steps[i].action);
+                        const char *p_col = sting_color_priority(&c, st->steps[i].priority);
+                        const char *s_col = sting_color_status(&c, st->steps[i].status);
+                        printf("%s%s[#%u]%s [%sP%d%s][%s%s%s] %s\n",
+                               indent, c.anchor, anc, c.reset,
+                               p_col, st->steps[i].priority, c.reset,
+                               s_col, st->steps[i].status, c.reset,
+                               st->steps[i].action);
                         printed = true;
                         break;
                     }
@@ -562,27 +694,34 @@ void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
     }
 
     /* 3. Target Node Details */
-    printf("\nTarget Node (#%u):\n", target_id);
+    printf("\n%sTarget Node (%s#%u%s):%s\n", c.bold, c.anchor, target_id, c.bold, c.reset);
     if (target_node) {
-        printf("  Kind: %s\n", target_node->kind);
-        printf("  Name: %s\n", target_node->name);
-        if (target_node->detail[0]) printf("  Detail: %s\n", target_node->detail);
-        printf("  Created: %s\n", target_node->created);
+        printf("  %sKind:%s %s\n", c.dim, c.reset, target_node->kind);
+        printf("  %sName:%s %s\n", c.dim, c.reset, target_node->name);
+        if (target_node->detail[0]) printf("  %sDetail:%s %s\n", c.dim, c.reset, target_node->detail);
+        printf("  %sCreated:%s %s\n", c.dim, c.reset, target_node->created);
     } else if (target_entry) {
-        printf("  Kind: %s (sev: %s)\n", target_entry->kind, target_entry->severity);
-        printf("  Summary: %s\n", target_entry->summary);
-        if (target_entry->detail[0]) printf("  Detail: %s\n", target_entry->detail);
-        printf("  Created: %s\n", target_entry->created);
+        const char *k_col = sting_color_kind(&c, target_entry->kind);
+        printf("  %sKind:%s %s%s%s (sev: %s)\n", c.dim, c.reset, k_col, target_entry->kind, c.reset, target_entry->severity);
+        printf("  %sSummary:%s %s\n", c.dim, c.reset, target_entry->summary);
+        if (target_entry->detail[0]) printf("  %sDetail:%s %s\n", c.dim, c.reset, target_entry->detail);
+        printf("  %sCreated:%s %s\n", c.dim, c.reset, target_entry->created);
     } else if (target_step) {
-        printf("  Priority: P%d | Status: %s\n", target_step->priority, target_step->status);
-        printf("  Action: %s\n", target_step->action);
-        printf("  Rationale: %s\n", target_step->rationale);
-        if (target_step->outcome[0]) printf("  Outcome: %s\n", target_step->outcome);
-        printf("  Created: %s | Modified: %s\n", target_step->created, target_step->modified);
+        const char *p_col = sting_color_priority(&c, target_step->priority);
+        const char *s_col = sting_color_status(&c, target_step->status);
+        printf("  %sPriority:%s %sP%d%s | %sStatus:%s %s%s%s\n",
+               c.dim, c.reset, p_col, target_step->priority, c.reset,
+               c.dim, c.reset, s_col, target_step->status, c.reset);
+        printf("  %sAction:%s %s\n", c.dim, c.reset, target_step->action);
+        printf("  %sRationale:%s %s\n", c.dim, c.reset, target_step->rationale);
+        if (target_step->outcome[0]) printf("  %sOutcome:%s %s\n", c.dim, c.reset, target_step->outcome);
+        printf("  %sCreated:%s %s | %sModified:%s %s\n",
+               c.dim, c.reset, target_step->created,
+               c.dim, c.reset, target_step->modified);
     }
 
     /* 4. Descendants Subtree (Topological DFS) */
-    printf("\nEpistemic Subtree / Outcomes:\n");
+    printf("\n%sEpistemic Subtree / Outcomes:%s\n", c.bold, c.reset);
     uint32_t reach[512];
     size_t reach_cnt = 0;
     reach[reach_cnt++] = target_id;
@@ -618,27 +757,35 @@ void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
     }
 
     if (reach_cnt <= 1) {
-        printf("  (No descendant actions or evidence recorded yet)\n");
+        printf("  %s(No descendant actions or evidence recorded yet)%s\n", c.dim, c.reset);
     } else {
         for (size_t r = 1; r < reach_cnt; r++) {
             uint32_t id = reach[r];
             for (size_t i = 0; i < st->entry_count; i++) {
                 if (st->entries[i].id == id) {
-                    printf("  [#%u <- #%u] [%s/%s] %s\n",
-                           id, st->entries[i].parent_id, st->entries[i].kind, st->entries[i].severity, st->entries[i].summary);
+                    const char *k_col = sting_color_kind(&c, st->entries[i].kind);
+                    printf("  %s[#%u <- #%u]%s [%s%s%s/%s] %s\n",
+                           c.anchor, id, st->entries[i].parent_id, c.reset,
+                           k_col, st->entries[i].kind, c.reset,
+                           st->entries[i].severity, st->entries[i].summary);
                     if (st->entries[i].detail[0]) {
-                        printf("      detail: %s\n", st->entries[i].detail);
+                        printf("      %sdetail:%s %s\n", c.dim, c.reset, st->entries[i].detail);
                     }
                     break;
                 }
             }
             for (size_t i = 0; i < st->step_count; i++) {
                 if (st->steps[i].id == id) {
-                    printf("  [#%u <- #%u] [P%d][%s] %s\n",
-                           id, st->steps[i].parent_id, st->steps[i].priority, st->steps[i].status, st->steps[i].action);
-                    printf("      why: %s\n", st->steps[i].rationale);
+                    const char *p_col = sting_color_priority(&c, st->steps[i].priority);
+                    const char *s_col = sting_color_status(&c, st->steps[i].status);
+                    printf("  %s[#%u <- #%u]%s [%sP%d%s][%s%s%s] %s\n",
+                           c.anchor, id, st->steps[i].parent_id, c.reset,
+                           p_col, st->steps[i].priority, c.reset,
+                           s_col, st->steps[i].status, c.reset,
+                           st->steps[i].action);
+                    printf("      %swhy:%s %s\n", c.dim, c.reset, st->steps[i].rationale);
                     if (st->steps[i].outcome[0]) {
-                        printf("      outcome: %s\n", st->steps[i].outcome);
+                        printf("      %soutcome:%s %s\n", c.dim, c.reset, st->steps[i].outcome);
                     }
                     break;
                 }

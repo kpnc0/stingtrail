@@ -5,31 +5,54 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void print_usage(const char *prog) {
-    fprintf(stderr,
-        "Stingtrail v%s — Minimalist Critical-Thinking CLI for Agents\n\n"
-        "Usage:\n"
-        "  %s [--db <file.jsonl>] [--scope <hosts>] <command> [args...]\n\n"
-        "Commands:\n"
-        "  node <kind> <name> [detail]                                 Record a root node\n"
-        "       kinds: premise, asset, context\n"
-        "  log <kind> <summary> [--parent N] [--sev S] [--detail D]    Append reasoning log\n"
-        "       kinds: observation, hypothesis, evidence, refutation, finding\n"
-        "       severities: info, low, medium, high, critical\n"
-        "  plan <action> --why <rationale> [--prio 1-5] [--parent N] [--target T]\n"
+static void print_usage(FILE *out, const char *prog) {
+    if (!out) out = stderr;
+    sting_color_t c = sting_color_get_for_stream(out);
+
+    fprintf(out,
+        "%sStingtrail v%s%s — %sMinimalist Critical-Thinking CLI for Agents%s\n\n"
+        "%sUsage:%s\n"
+        "  %s%s%s %s[--db <file.jsonl>] [--scope <hosts>] [--color[=auto|always|never]] [--no-color]%s %s<command>%s %s[args...]%s\n\n"
+        "%sCommands:%s\n"
+        "  %snode%s %s<kind> <name> [detail]%s                                 Record a root node\n"
+        "       %skinds:%s %spremise%s, %sasset%s, %scontext%s\n"
+        "  %slog%s %s<kind> <summary> [--parent N] [--sev S] [--detail D]%s    Append reasoning log\n"
+        "       %skinds:%s %sobservation%s, %shypothesis%s, %sevidence%s, %srefutation%s, %sfinding%s\n"
+        "       %sseverities:%s %sinfo%s, %slow%s, %smedium%s, %shigh%s, %scritical%s\n"
+        "  %splan%s %s<action> --why <rationale> [--prio 1-5] [--parent N] [--target T]%s\n"
         "       Propose a prioritized action step with mandatory rationale\n"
-        "  step <id> <status> [outcome]                                Update step state\n"
-        "       statuses: pending, in_progress, done, blocked\n"
-        "  status [--json] [--focus <id>]                              Display board or focused subtree\n"
-        "  focus <id> [--json]                                         Display focused context (hourglass traversal)\n"
-        "  export [--focus <id>]                                       Export full or focused state JSON\n"
-        "  hook                                                        Print synchronous shell hook integration script\n"
-        "  hook-eval <command>                                         Evaluate command under guard and active context\n"
-        "  context [get | set <id> | clear]                            Manage active hypothesis context\n"
-        "  mcp                                                         Run MCP JSON-RPC stdio server\n"
-        "  version                                                     Print version\n"
-        "  help                                                        Show this help\n",
-        STINGTRAIL_VERSION, prog);
+        "  %sstep%s %s<id> <status> [outcome]%s                                Update step state\n"
+        "       %sstatuses:%s %spending%s, %sin_progress%s, %sdone%s, %sblocked%s\n"
+        "  %sstatus%s %s[--json] [--focus <id>]%s                              Display board or focused subtree\n"
+        "  %sfocus%s %s<id> [--json]%s                                         Display focused context (hourglass traversal)\n"
+        "  %sexport%s %s[--focus <id>]%s                                       Export full or focused state JSON\n"
+        "  %shook%s                                                        Print synchronous shell hook integration script\n"
+        "  %shook-eval%s %s<command>%s                                         Evaluate command under guard and active context\n"
+        "  %scontext%s %s[get | set <id> | clear]%s                            Manage active hypothesis context\n"
+        "  %smcp%s                                                         Run MCP JSON-RPC stdio server\n"
+        "  %sversion%s                                                     Print version\n"
+        "  %shelp%s                                                        Show this help\n",
+        c.bold, STINGTRAIL_VERSION, c.reset, c.dim, c.reset,
+        c.bold, c.reset,
+        c.anchor, prog, c.reset, c.dim, c.reset, c.anchor, c.reset, c.dim, c.reset,
+        c.bold, c.reset,
+        c.anchor, c.reset, c.dim, c.reset,
+        c.dim, c.reset, c.anchor, c.reset, c.pending, c.reset, c.dim, c.reset,
+        c.anchor, c.reset, c.dim, c.reset,
+        c.dim, c.reset, c.obs, c.reset, c.hyp, c.reset, c.evi, c.reset, c.ref, c.reset, c.find, c.reset,
+        c.dim, c.reset, c.dim, c.reset, c.p3, c.reset, c.p2, c.reset, c.p1, c.reset, c.blocked, c.reset,
+        c.anchor, c.reset, c.dim, c.reset,
+        c.anchor, c.reset, c.dim, c.reset,
+        c.dim, c.reset, c.pending, c.reset, c.in_progress, c.reset, c.done, c.reset, c.blocked, c.reset,
+        c.anchor, c.reset, c.dim, c.reset,
+        c.anchor, c.reset, c.dim, c.reset,
+        c.anchor, c.reset, c.dim, c.reset,
+        c.anchor, c.reset,
+        c.anchor, c.reset, c.dim, c.reset,
+        c.anchor, c.reset, c.dim, c.reset,
+        c.anchor, c.reset,
+        c.anchor, c.reset,
+        c.anchor, c.reset);
 }
 
 int main(int argc, char **argv) {
@@ -52,8 +75,20 @@ int main(int argc, char **argv) {
             }
             scope_csv = argv[++arg_idx];
             arg_idx++;
+        } else if (strcmp(argv[arg_idx], "--color") == 0) {
+            sting_color_set_mode(1);
+            arg_idx++;
+        } else if (strncmp(argv[arg_idx], "--color=", 8) == 0) {
+            const char *val = argv[arg_idx] + 8;
+            if (strcmp(val, "always") == 0) sting_color_set_mode(1);
+            else if (strcmp(val, "never") == 0) sting_color_set_mode(2);
+            else sting_color_set_mode(0);
+            arg_idx++;
+        } else if (strcmp(argv[arg_idx], "--no-color") == 0) {
+            sting_color_set_mode(2);
+            arg_idx++;
         } else if (strcmp(argv[arg_idx], "--help") == 0 || strcmp(argv[arg_idx], "-h") == 0) {
-            print_usage(argv[0]);
+            print_usage(stdout, argv[0]);
             return 0;
         } else if (strcmp(argv[arg_idx], "--version") == 0 || strcmp(argv[arg_idx], "-v") == 0) {
             printf("stingtrail %s\n", STINGTRAIL_VERSION);
@@ -65,13 +100,13 @@ int main(int argc, char **argv) {
     }
 
     if (arg_idx >= argc) {
-        print_usage(argv[0]);
+        print_usage(stderr, argv[0]);
         return 1;
     }
 
     const char *cmd = argv[arg_idx++];
     if (strcmp(cmd, "help") == 0) {
-        print_usage(argv[0]);
+        print_usage(stdout, argv[0]);
         return 0;
     }
     if (strcmp(cmd, "version") == 0) {
@@ -105,7 +140,8 @@ int main(int argc, char **argv) {
             fprintf(stderr, "error: failed to add node\n");
             return 1;
         }
-        printf("node #%u recorded\n", id);
+        sting_color_t c = sting_color_get();
+        printf("node %s#%u%s recorded\n", c.anchor, id, c.reset);
         return 0;
     }
 
@@ -144,7 +180,8 @@ int main(int argc, char **argv) {
             fprintf(stderr, "error: failed to log entry (verify parent_id exists)\n");
             return 1;
         }
-        printf("entry #%u logged\n", id);
+        sting_color_t c = sting_color_get();
+        printf("entry %s#%u%s logged\n", c.anchor, id, c.reset);
         return 0;
     }
 
@@ -188,7 +225,8 @@ int main(int argc, char **argv) {
             fprintf(stderr, "error: %s\n", err ? err : "failed to plan step");
             return 1;
         }
-        printf("step #%u planned\n", id);
+        sting_color_t c = sting_color_get();
+        printf("step %s#%u%s planned\n", c.anchor, id, c.reset);
         return 0;
     }
 
@@ -209,7 +247,9 @@ int main(int argc, char **argv) {
             fprintf(stderr, "error: invalid step id or status (valid: pending, in_progress, done, blocked)\n");
             return 1;
         }
-        printf("step #%u updated to %s\n", step_id, status);
+        sting_color_t c = sting_color_get();
+        const char *s_col = sting_color_status(&c, status);
+        printf("step %s#%u%s updated to %s%s%s\n", c.anchor, step_id, c.reset, s_col, status, c.reset);
         return 0;
     }
 
@@ -408,15 +448,16 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(cmd, "context") == 0) {
+        sting_color_t c = sting_color_get();
         if (arg_idx >= argc || strcmp(argv[arg_idx], "get") == 0) {
             uint32_t active_id = sting_context_get(db_path);
             if (active_id == 0) {
-                printf("Active context: none (no hypothesis/premise active)\n");
+                printf("Active context: %snone%s (no hypothesis/premise active)\n", c.dim, c.reset);
             } else {
                 bool found = false;
                 for (size_t i = 0; i < st.node_count; i++) {
                     if (st.nodes[i].id == active_id) {
-                        printf("Active context: #%u (%s: %s)\n", active_id, st.nodes[i].kind, st.nodes[i].name);
+                        printf("Active context: %s#%u%s (%s: %s)\n", c.anchor, active_id, c.reset, st.nodes[i].kind, st.nodes[i].name);
                         found = true;
                         break;
                     }
@@ -424,14 +465,15 @@ int main(int argc, char **argv) {
                 if (!found) {
                     for (size_t i = 0; i < st.entry_count; i++) {
                         if (st.entries[i].id == active_id) {
-                            printf("Active context: #%u (%s: %s)\n", active_id, st.entries[i].kind, st.entries[i].summary);
+                            const char *k_col = sting_color_kind(&c, st.entries[i].kind);
+                            printf("Active context: %s#%u%s (%s%s%s: %s)\n", c.anchor, active_id, c.reset, k_col, st.entries[i].kind, c.reset, st.entries[i].summary);
                             found = true;
                             break;
                         }
                     }
                 }
                 if (!found) {
-                    printf("Active context: #%u\n", active_id);
+                    printf("Active context: %s#%u%s\n", c.anchor, active_id, c.reset);
                 }
             }
             return 0;
@@ -479,7 +521,8 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "error: failed to write context\n");
                 return 1;
             }
-            printf("Active context set to #%u (%s: %s)\n", id, kind_str, name_str);
+            const char *k_col = sting_color_kind(&c, kind_str);
+            printf("Active context set to %s#%u%s (%s%s%s: %s)\n", c.anchor, id, c.reset, k_col, kind_str, c.reset, name_str);
             return 0;
         }
 
