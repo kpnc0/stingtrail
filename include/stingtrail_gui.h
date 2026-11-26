@@ -43,9 +43,20 @@ typedef enum {
 
 } sting_glow_type_t;
 
+#define STING_GUI_DEFAULT_RENDER_DISTANCE 1800.0f
+
+typedef enum {
+    STING_ITEM_NODE  = 0,
+    STING_ITEM_ENTRY = 1,
+    STING_ITEM_STEP  = 2
+} sting_gui_item_kind_t;
+
 typedef struct {
     uint32_t id;
     uint32_t parent_id;
+    int parent_idx;
+    sting_gui_item_kind_t item_kind;
+    size_t state_index;
     int rnode;
     int in_pin;
     int out_pin;
@@ -73,6 +84,14 @@ typedef struct {
     size_t total_items;
     int selected_rnode;
     int hovered_rnode;
+    uint32_t selected_id;
+    uint32_t hovered_id;
+    float last_cull_cx;
+    float last_cull_cy;
+    float last_cull_zoom;
+    float last_cull_vw;
+    float last_cull_vh;
+    bool has_culled;
 } sting_gui_context_t;
 
 typedef enum {
@@ -128,6 +147,12 @@ void sting_gui_go_to_sibling(Rid graph, int rnode, bool reverse);
  *   l -> first child
  */
 bool sting_gui_handle_key(Rid graph, RKey key, Ruint modifiers);
+
+/* Render distance culling (canvas units from camera center; <= 0 disables culling) */
+void sting_gui_set_render_distance(float distance);
+float sting_gui_get_render_distance(void);
+size_t sting_gui_get_rendered_node_count(void);
+int sting_gui_update_render_distance(Rid graph);
 
 /* DAG construction & event handling */
 int sting_gui_build_dag(Rid graph, sting_state_t *st);

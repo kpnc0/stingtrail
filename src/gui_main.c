@@ -14,9 +14,10 @@ static void print_usage(FILE *out, const char *prog) {
         "%sUsage:%s\n"
         "  %s%s%s %s[options] [journal.jsonl]%s\n\n"
         "%sOptions:%s\n"
-        "  %s--db <file.jsonl>%s   Path to JSONL journal database (default: stingtrail.jsonl)\n"
-        "  %s-v, --version%s       Display version information\n"
-        "  %s-h, --help%s          Show this help message\n\n"
+        "  %s--db <file.jsonl>%s       Path to JSONL journal database (default: stingtrail.jsonl)\n"
+        "  %s--render-distance <n>%s   Render distance radius in canvas units (default: %.0f, 0 = all)\n"
+        "  %s-v, --version%s           Display version information\n"
+        "  %s-h, --help%s              Show this help message\n\n"
         "%sVim Keybindings (Read-Only):%s\n"
         "  %sh%s                   Go to immediate parent node\n"
         "  %sj%s                   Go to next sibling node (forward)\n"
@@ -27,6 +28,7 @@ static void print_usage(FILE *out, const char *prog) {
         c.anchor, prog, c.reset, c.dim, c.reset,
         c.bold, c.reset,
         c.anchor, c.reset,
+        c.anchor, c.reset, (double)STING_GUI_DEFAULT_RENDER_DISTANCE,
         c.anchor, c.reset,
         c.anchor, c.reset,
         c.bold, c.reset,
@@ -47,6 +49,19 @@ int main(int argc, char **argv) {
                 return 1;
             }
             db_path = argv[++arg_idx];
+            arg_idx++;
+        } else if (strcmp(argv[arg_idx], "--render-distance") == 0) {
+            if (arg_idx + 1 >= argc) {
+                fprintf(stderr, "error: --render-distance requires a numeric value\n");
+                return 1;
+            }
+            char *endp = NULL;
+            float dist = strtof(argv[++arg_idx], &endp);
+            if (!endp || *endp != '\0' || dist < 0.0f) {
+                fprintf(stderr, "error: invalid --render-distance value '%s'\n", argv[arg_idx]);
+                return 1;
+            }
+            sting_gui_set_render_distance(dist);
             arg_idx++;
         } else if (strcmp(argv[arg_idx], "-h") == 0 || strcmp(argv[arg_idx], "--help") == 0) {
             print_usage(stdout, argv[0]);

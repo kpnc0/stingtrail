@@ -271,6 +271,143 @@ TEST(gui_focus_and_see_all) {
     Rshutdown();
 }
 
+TEST(render_distance_culling_over_200_nodes) {
+    init_headless_raven();
+    sting_gui_set_render_distance(STING_GUI_DEFAULT_RENDER_DISTANCE);
+
+    sting_state_t st;
+    sting_state_init(&st, NULL);
+
+    uint32_t root = sting_state_add_node(&st, "premise", "Large Graph Root", "Stress test >200 nodes", false);
+    uint32_t last_step = 0;
+    for (int i = 0; i < 240; i++) {
+        char action[64];
+        snprintf(action, sizeof(action), "Step %d", i);
+        uint32_t sid = sting_state_plan_step(&st, root, (i % 5) + 1, "10.0.0.1", action, "Benchmark culling", false, NULL);
+        ASSERT_TRUE(sid != 0);
+        last_step = sid;
+    }
+    for (int i = 0; i < 60; i++) {
+        char summary[64];
+        snprintf(summary, sizeof(summary), "Observation %d", i);
+        uint32_t eid = sting_state_add_entry(&st, last_step, "observation", "info", summary, "Detail text", false);
+        ASSERT_TRUE(eid != 0);
+    }
+
+    Rid graph = Rnode_graph_create();
+    int links = sting_gui_build_dag(graph, &st);
+    ASSERT_TRUE(links > 0);
+
+    sting_gui_context_t *ctx = sting_gui_get_context();
+    ASSERT_TRUE(ctx != NULL);
+    ASSERT_EQ_INT((int)ctx->total_items, 301);
+
+    /* Nodes outside render distance must NOT be materialized in Raven */
+    int rendered = Rnode_graph_get_node_count(graph);
+    ASSERT_TRUE(rendered > 0);
+    ASSERT_TRUE(rendered < 200);
+    ASSERT_EQ_INT((int)sting_gui_get_rendered_node_count(), rendered);
+
+    /* Find the last step (far down the vertical stack) and verify it is culled at origin */
+    int last_idx = -1;
+    for (size_t i = 0; i < ctx->total_items; i++) {
+        if (ctx->items[i].id == last_step) {
+            last_idx = (int)i;
+            break;
+        }
+    }
+    ASSERT_TRUE(last_idx >= 0);
+    ASSERT_EQ_INT(ctx->items[last_idx].rnode, 0);
+
+    /* Pan camera to the far step: far nodes materialize, origin root is culled */
+    float far_cx = ctx->items[last_idx].x + ctx->items[last_idx].w * 0.5f;
+    float far_cy = ctx->items[last_idx].y + ctx->items[last_idx].h * 0.5f;
+    Rnode_graph_set_view(graph, far_cx, far_cy, 1.0f);
+    sting_gui_update_render_distance(graph);
+
+    int rendered_far = Rnode_graph_get_node_count(graph);
+    ASSERT_TRUE(rendered_far > 0);
+    ASSERT_TRUE(rendered_far < 200);
+    ASSERT_TRUE(ctx->items[last_idx].rnode != 0);
+    ASSERT_EQ_INT(ctx->items[0].rnode, 0); /* Root at top is now outside render distance */
+    ASSERT_TRUE(Rnode_graph_get_link_count(graph) > 0);
+
+    /* Disabling render distance (<= 0) materializes all 301 nodes */
+    sting_gui_set_render_distance(0.0f);
+    sting_gui_update_render_distance(graph);
+    ASSERT_EQ_INT(Rnode_graph_get_node_count(graph), 301);
+
+    /* Re-enabling render distance culls again */
+    sting_gui_set_render_distance(900.0f);
+    sting_gui_update_render_distance(graph);
+    ASSERT_TRUE(Rnode_graph_get_node_count(graph) < 100);
+    ASSERT_TRUE(ctx->items[last_idx].rnode != 0);
+
+    sting_gui_set_render_distance(STING_GUI_DEFAULT_RENDER_DISTANCE);
+    sting_gui_cleanup_context();
+    Rshutdown();
+}
+
+TEST(render_distance_navigation_and_highlight) {
+    init_headless_raven();
+    sting_gui_set_render_distance(600.0f);
+
+    sting_state_t st;
+    sting_state_init(&st, NULL);
+
+    uint32_t root = sting_state_add_node(&st, "premise", "Nav Root", "Root", false);
+    uint32_t prev_step = 0;
+    for (int i = 0; i < 40; i++) {
+        char action[64];
+        snprintf(action, sizeof(action), "Sibling %d", i);
+        prev_step = sting_state_plan_step(&st, root, 2, "10.0.0.1", action, "Why", false, NULL);
+    }
+    uint32_t child = sting_state_add_entry(&st, prev_step, "evidence", "info", "Far Child", "Deep node", false);
+
+    Rid graph = Rnode_graph_create();
+    sting_gui_build_dag(graph, &st);
+
+    sting_gui_context_t *ctx = sting_gui_get_context();
+    ASSERT_TRUE(ctx != NULL);
+    ASSERT_EQ_INT((int)ctx->total_items, 42);
+
+    /* Root is near origin, child under 40th sibling is far outside 600px render distance */
+    int root_idx = -1, prev_idx = -1, child_idx = -1;
+    for (size_t i = 0; i < ctx->total_items; i++) {
+        if (ctx->items[i].id == root) root_idx = (int)i;
+        else if (ctx->items[i].id == prev_step) prev_idx = (int)i;
+        else if (ctx->items[i].id == child) child_idx = (int)i;
+    }
+    ASSERT_TRUE(root_idx >= 0 && prev_idx >= 0 && child_idx >= 0);
+    ASSERT_TRUE(ctx->items[root_idx].rnode != 0);
+    ASSERT_EQ_INT(ctx->items[child_idx].rnode, 0);
+
+    /* Selecting root highlights full logical chain including culled child */
+    sting_gui_select_node(graph, ctx->items[root_idx].rnode);
+    ASSERT_EQ_INT(ctx->items[child_idx].highlighted, 1);
+    ASSERT_EQ_INT((int)ctx->selected_id, (int)root);
+
+    /* Pressing 'k' from first sibling wraps around to last sibling (far off-screen) */
+    ASSERT_TRUE(sting_gui_handle_key(graph, (RKey)'l', 0));
+    sting_gui_finish_animation(graph);
+    ASSERT_TRUE(sting_gui_handle_key(graph, (RKey)'k', 0));
+    sting_gui_finish_animation(graph);
+
+    ASSERT_EQ_INT((int)ctx->selected_id, (int)prev_step);
+    ASSERT_TRUE(ctx->items[prev_idx].rnode != 0);
+    ASSERT_EQ_INT(ctx->selected_rnode, ctx->items[prev_idx].rnode);
+
+    /* Pressing 'l' navigates into its child and keeps it materialized */
+    ASSERT_TRUE(sting_gui_handle_key(graph, (RKey)'l', 0));
+    sting_gui_finish_animation(graph);
+    ASSERT_EQ_INT((int)ctx->selected_id, (int)child);
+    ASSERT_TRUE(ctx->items[child_idx].rnode != 0);
+
+    sting_gui_set_render_distance(STING_GUI_DEFAULT_RENDER_DISTANCE);
+    sting_gui_cleanup_context();
+    Rshutdown();
+}
+
 int main(void) {
     printf("=== Stingtrail-GUI Unit & Integration Test Suite ===\n");
     RUN_TEST(headless_dag_build_and_semantic_glow);
@@ -278,6 +415,8 @@ int main(void) {
     RUN_TEST(vim_hjkl_keybindings);
     RUN_TEST(camera_transition_and_layout_toggles);
     RUN_TEST(gui_focus_and_see_all);
+    RUN_TEST(render_distance_culling_over_200_nodes);
+    RUN_TEST(render_distance_navigation_and_highlight);
 
     printf("=== Result: %d/%d tests passed ===\n", g_tests_passed, g_tests_run);
     return (g_tests_passed == g_tests_run) ? 0 : 1;
