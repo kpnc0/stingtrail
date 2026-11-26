@@ -220,7 +220,8 @@ For visual inspection of mission graphs without altering state, `stingtrail-gui`
 - **Smooth View Transitions**: Smoothstep camera interpolation when jumping between parent, child, or sibling nodes.
 - **Live File Watcher**: Automatically re-renders the DAG preserving zoom level and selection when the underlying `.jsonl` journal changes.
 - **Hierarchical Layouts**: Supports both multi-column horizontal and vertical layout orientations.
-- **Spatial Render Distance Culling**: Computes full DAG layout once and dynamically materializes/unmaterializes only nodes and links within render distance of the camera (`1800` canvas units by default, with 15% hysteresis), keeping large 200+ node graphs smooth while preserving lineage highlighting and `hjkl` navigation.
+- **Spatial Render Distance Culling**: Computes full DAG layout once and dynamically materializes/unmaterializes only nodes and links within render distance of the camera (`1800` canvas units by default, with 15% hysteresis), keeping large 200+ node graphs smooth while preserving lineage highlighting and `hjkl` navigation. When a node inside render distance is selected/focused, its immediate parent and immediate child nodes remain rendered so incoming and outgoing paths stay visible (without pulling in grandparents or grandchildren).
+- **Semantic Glow Coding**: Root conceptual nodes (`premise`, `asset`, `context`) glow teal-blue (`#016064`), completed steps glow green (`#29AB87`), active/pending steps glow orange (`#FF9500`), blocked/refuted nodes glow red (`#FF3B30`), and neutral reasoning entries glow pink (`#FC46AA`).
 
 ### Invocation
 ```bash

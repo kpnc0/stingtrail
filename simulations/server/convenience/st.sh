@@ -116,3 +116,48 @@ stpend()  { st step "$1" pending     "${2:-}"; }
 sts()  { st status "$@"; }
 stf()  { st focus "$@"; }
 stx()  { st export "$@"; }
+
+sthelp() {
+	if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+		_st_bold='\033[1m'
+		_st_cyan='\033[36m'
+		_st_reset='\033[0m'
+	else
+		_st_bold=''
+		_st_cyan=''
+		_st_reset=''
+	fi
+
+	printf '%b\n' "${_st_bold}stingtrail convenience commands${_st_reset}"
+	printf '%b\n' "${_st_cyan}Setup${_st_reset}"
+	printf '  source ./st.sh [journal.jsonl] [scope_hosts]  Set ST_DB and optional ST_SCOPE\n'
+	printf '  stdb [journal.jsonl]                          Show or switch the active journal\n'
+	printf '  st [args...]                                  Run stingtrail with --db and optional --scope\n'
+
+	printf '%b\n' "${_st_cyan}Nodes and context${_st_reset}"
+	printf '  stprem "text" [detail]                        Create a premise; set it as context\n'
+	printf '  stasset "text" [detail]                       Create an asset\n'
+	printf '  stctx [get|set|clear] [args...]               Get, set, or clear context; other input creates a context node\n'
+
+	printf '%b\n' "${_st_cyan}Logging${_st_reset}"
+	printf '  stobs "summary" [parent_id] [sev] [detail]     Log an observation\n'
+	printf '  sthyp "summary" [parent_id] [sev] [detail]     Log a hypothesis; set it as context\n'
+	printf '  stev "summary" [parent_id] [sev] [detail]      Log evidence\n'
+	printf '  stref "summary" [parent_id] [sev] [detail]     Log a refutation\n'
+	printf '  stfind "summary" [parent_id] [sev] [detail]    Log a finding\n'
+
+	printf '%b\n' "${_st_cyan}Planning and steps${_st_reset}"
+	printf '  stplan "action" "rationale" [prio] [parent] [target]\n'
+	printf '                                                Create a plan item\n'
+	printf '  ststart STEP_ID [note]                        Mark a step in progress\n'
+	printf '  stdone STEP_ID [note]                         Mark a step done\n'
+	printf '  stblock STEP_ID [note]                        Mark a step blocked\n'
+	printf '  stpend STEP_ID [note]                         Mark a step pending\n'
+
+	printf '%b\n' "${_st_cyan}Inspection${_st_reset}"
+	printf '  sts [args...]                                 Show status\n'
+	printf '  stf [args...]                                 Show or manage focus\n'
+	printf '  stx [args...]                                 Export data\n'
+
+	unset _st_bold _st_cyan _st_reset
+}

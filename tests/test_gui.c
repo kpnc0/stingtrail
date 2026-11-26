@@ -64,7 +64,10 @@ TEST(headless_dag_build_and_semantic_glow) {
 
     /* Verify semantic glows */
     for (size_t i = 0; i < ctx->total_items; i++) {
-        if (ctx->items[i].id == s1) {
+        if (ctx->items[i].id == root) {
+            ASSERT_EQ_INT(ctx->items[i].glow_type, STING_GLOW_BLUE);
+            ASSERT_TRUE(fabsf(ctx->items[i].glow_r - STING_GLOW_BLUE_R) < 0.001f);
+        } else if (ctx->items[i].id == s1) {
             ASSERT_EQ_INT(ctx->items[i].glow_type, STING_GLOW_GREEN);
             ASSERT_TRUE(fabsf(ctx->items[i].glow_r - STING_GLOW_GREEN_R) < 0.001f);
         } else if (ctx->items[i].id == s2) {
@@ -483,6 +486,86 @@ TEST(find_node_by_id_keymap) {
     Rshutdown();
 }
 
+TEST(render_distance_focused_immediate_neighbors) {
+    init_headless_raven();
+    sting_gui_set_render_distance(200.0f);
+
+    sting_state_t st;
+    sting_state_init(&st, NULL);
+
+    /* 5-level chain across columns: grandparent -> parent -> focused -> child -> grandchild */
+    uint32_t gp = sting_state_add_node(&st, "premise", "Grandparent Root", "Level 0", false);
+    uint32_t parent = sting_state_add_entry(&st, gp, "hypothesis", "info", "Parent", "Level 1", false);
+    uint32_t focused = sting_state_plan_step(&st, parent, 2, "10.0.0.1", "Focused Step", "Level 2", false, NULL);
+    uint32_t child = sting_state_add_entry(&st, focused, "observation", "info", "Immediate Child", "Level 3", false);
+    uint32_t gc = sting_state_plan_step(&st, child, 2, "10.0.0.2", "Grandchild Step", "Level 4", false, NULL);
+
+    Rid graph = Rnode_graph_create();
+    sting_gui_build_dag(graph, &st);
+
+    sting_gui_context_t *ctx = sting_gui_get_context();
+    ASSERT_TRUE(ctx != NULL);
+    ASSERT_EQ_INT((int)ctx->total_items, 5);
+
+    int idx_gp = -1, idx_p = -1, idx_f = -1, idx_c = -1, idx_gc = -1;
+    for (size_t i = 0; i < ctx->total_items; i++) {
+        if (ctx->items[i].id == gp) idx_gp = (int)i;
+        else if (ctx->items[i].id == parent) idx_p = (int)i;
+        else if (ctx->items[i].id == focused) idx_f = (int)i;
+        else if (ctx->items[i].id == child) idx_c = (int)i;
+        else if (ctx->items[i].id == gc) idx_gc = (int)i;
+    }
+    ASSERT_TRUE(idx_gp >= 0 && idx_p >= 0 && idx_f >= 0 && idx_c >= 0 && idx_gc >= 0);
+
+    /* Place nodes cleanly spaced 500px apart horizontally to test 1-hop vs 2-hop culling */
+    ctx->items[idx_gp].x = 0.0f;    ctx->items[idx_gp].y = 50.0f;
+    ctx->items[idx_p].x  = 500.0f;  ctx->items[idx_p].y  = 50.0f;
+    ctx->items[idx_f].x  = 1000.0f; ctx->items[idx_f].y  = 50.0f;
+    ctx->items[idx_c].x  = 1500.0f; ctx->items[idx_c].y  = 50.0f;
+    ctx->items[idx_gc].x = 2000.0f; ctx->items[idx_gc].y = 50.0f;
+
+    /* Center on focused without selecting: only focused is within 200px */
+    Rnode_graph_set_view(graph, 1120.0f, 100.0f, 1.0f);
+    ctx->has_culled = false;
+    sting_gui_update_render_distance(graph);
+
+    ASSERT_EQ_INT(ctx->items[idx_gp].rnode, 0);
+    ASSERT_EQ_INT(ctx->items[idx_p].rnode, 0);
+    ASSERT_TRUE(ctx->items[idx_f].rnode != 0);
+    ASSERT_EQ_INT(ctx->items[idx_c].rnode, 0);
+    ASSERT_EQ_INT(ctx->items[idx_gc].rnode, 0);
+
+    /* Select/focus focused node: immediate parent and immediate child materialize,
+     * while grandparent and grandchild remain culled */
+    sting_gui_select_node(graph, ctx->items[idx_f].rnode);
+    ASSERT_EQ_INT(ctx->items[idx_gp].rnode, 0);
+    ASSERT_TRUE(ctx->items[idx_p].rnode != 0);
+    ASSERT_TRUE(ctx->items[idx_f].rnode != 0);
+    ASSERT_TRUE(ctx->items[idx_c].rnode != 0);
+    ASSERT_EQ_INT(ctx->items[idx_gc].rnode, 0);
+    ASSERT_EQ_INT(Rnode_graph_get_link_count(graph), 2); /* parent->focused & focused->child */
+
+    /* Deselect: out-of-range parent and child are culled again */
+    sting_gui_highlight_chain(graph, ctx, 0);
+    sting_gui_update_render_distance(graph);
+    ASSERT_EQ_INT(ctx->items[idx_p].rnode, 0);
+    ASSERT_TRUE(ctx->items[idx_f].rnode != 0);
+    ASSERT_EQ_INT(ctx->items[idx_c].rnode, 0);
+
+    /* Re-select focused, then pan far away so focused itself is outside render distance */
+    sting_gui_select_node(graph, ctx->items[idx_f].rnode);
+    ASSERT_TRUE(ctx->items[idx_c].rnode != 0);
+    Rnode_graph_set_view(graph, 5000.0f, 5000.0f, 1.0f);
+    sting_gui_update_render_distance(graph);
+    ASSERT_EQ_INT(ctx->items[idx_p].rnode, 0);
+    ASSERT_EQ_INT(ctx->items[idx_f].rnode, 0);
+    ASSERT_EQ_INT(ctx->items[idx_c].rnode, 0);
+
+    sting_gui_set_render_distance(STING_GUI_DEFAULT_RENDER_DISTANCE);
+    sting_gui_cleanup_context();
+    Rshutdown();
+}
+
 int main(void) {
     printf("=== Stingtrail-GUI Unit & Integration Test Suite ===\n");
     RUN_TEST(headless_dag_build_and_semantic_glow);
@@ -493,6 +576,7 @@ int main(void) {
     RUN_TEST(render_distance_culling_over_200_nodes);
     RUN_TEST(render_distance_navigation_and_highlight);
     RUN_TEST(find_node_by_id_keymap);
+    RUN_TEST(render_distance_focused_immediate_neighbors);
 
     printf("=== Result: %d/%d tests passed ===\n", g_tests_passed, g_tests_run);
     return (g_tests_passed == g_tests_run) ? 0 : 1;

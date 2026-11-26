@@ -37,10 +37,9 @@ typedef enum {
     STING_GLOW_NONE   = 0,
     STING_GLOW_GREEN  = 1, /* Subtle green #29AB87 for successful/done nodes */
     STING_GLOW_ORANGE = 2, /* Orange #FF9500 for pending/in_progress nodes */
-    STING_GLOW_RED    = 3,  /* Red #FF3B30 for blocked/dead-end nodes */
-		STING_GLOW_BLUE		= 4,
-		STING_GLOW_PINK		= 5
-
+    STING_GLOW_RED    = 3, /* Red #FF3B30 for blocked/dead-end nodes */
+    STING_GLOW_BLUE   = 4, /* Teal-blue #016064 for conceptual root nodes (premise/asset/context) */
+    STING_GLOW_PINK   = 5
 } sting_glow_type_t;
 
 #define STING_GUI_DEFAULT_RENDER_DISTANCE 1800.0f
@@ -91,6 +90,7 @@ typedef struct {
     float last_cull_zoom;
     float last_cull_vw;
     float last_cull_vh;
+    uint32_t last_cull_selected_id;
     bool has_culled;
 } sting_gui_context_t;
 

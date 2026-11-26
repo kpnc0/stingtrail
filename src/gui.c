@@ -827,6 +827,13 @@ static void compute_semantic_glows(sting_gui_item_t *items, size_t total_items, 
             }
         }
 
+        if (items[i].glow_type == STING_GLOW_NONE && items[i].item_kind == STING_ITEM_NODE) {
+            items[i].glow_type = STING_GLOW_BLUE;
+            items[i].glow_r = STING_GLOW_BLUE_R;
+            items[i].glow_g = STING_GLOW_BLUE_G;
+            items[i].glow_b = STING_GLOW_BLUE_B;
+        }
+
         if (items[i].glow_type == STING_GLOW_NONE) {
             bool has_children = false;
             for (size_t c = 0; c < total_items; c++) {
@@ -1059,6 +1066,7 @@ static void sting_gui_on_selection_callback(Rid graph, int item, void *user_data
         g_context_rnode = item;
         sting_gui_highlight_chain(graph, ctx, item);
     }
+    sting_gui_update_render_distance(graph);
 }
 
 int sting_gui_handle_event(Rid widget, const REvent *event, void *user_data) {
@@ -1102,6 +1110,7 @@ void sting_gui_select_node(Rid graph, int rnode) {
     g_context_rnode = rnode;
     Rnode_graph_select_node(graph, rnode, 0);
     sting_gui_highlight_chain(graph, g_gui_ctx, rnode);
+    sting_gui_update_render_distance(graph);
 }
 
 sting_gui_context_t *sting_gui_get_context(void) {
@@ -1314,6 +1323,7 @@ int sting_gui_update_render_distance(Rid graph) {
     if (vh <= 0.0f) vh = 800.0f;
 
     if (g_gui_ctx->has_culled &&
+        g_gui_ctx->last_cull_selected_id == g_gui_ctx->selected_id &&
         fabsf(cx - g_gui_ctx->last_cull_cx) < 1.0f &&
         fabsf(cy - g_gui_ctx->last_cull_cy) < 1.0f &&
         fabsf(zoom - g_gui_ctx->last_cull_zoom) < 0.001f &&
@@ -1328,6 +1338,7 @@ int sting_gui_update_render_distance(Rid graph) {
     g_gui_ctx->last_cull_zoom = zoom;
     g_gui_ctx->last_cull_vw = vw;
     g_gui_ctx->last_cull_vh = vh;
+    g_gui_ctx->last_cull_selected_id = g_gui_ctx->selected_id;
     g_gui_ctx->has_culled = true;
 
     size_t total = g_gui_ctx->total_items;
@@ -1339,11 +1350,36 @@ int sting_gui_update_render_distance(Rid graph) {
     float enter_dist = g_render_distance;
     float exit_dist = use_hysteresis ? (g_render_distance * 1.15f) : g_render_distance;
 
+    /* If a node inside render distance is focused, keep its immediate parent and
+     * immediate children rendered so incoming and outgoing paths remain visible. */
+    int focus_idx = -1;
+    uint32_t focus_node_id = 0;
+    uint32_t focus_parent_id = 0;
+    if (enter_dist > 0.0f && g_gui_ctx->selected_id != 0) {
+        int s_idx = find_item_idx_by_id(g_gui_ctx->selected_id);
+        if (s_idx >= 0) {
+            float s_dist = aabb_distance_to_point(cx, cy, items[s_idx].x, items[s_idx].y, items[s_idx].w, items[s_idx].h);
+            float s_limit = (items[s_idx].rnode != 0) ? exit_dist : enter_dist;
+            if (s_dist <= s_limit || g_camera_anim.active) {
+                focus_idx = s_idx;
+                focus_node_id = items[s_idx].id;
+                focus_parent_id = items[s_idx].parent_id;
+            }
+        }
+    }
+
     for (size_t i = 0; i < total; i++) {
         bool keep = true;
         if (enter_dist > 0.0f) {
-            bool keep_anim_sel = (g_camera_anim.active && g_gui_ctx->selected_id != 0 && items[i].id == g_gui_ctx->selected_id);
-            if (!keep_anim_sel) {
+            bool keep_focus_1hop = false;
+            if (focus_idx >= 0) {
+                if ((int)i == focus_idx ||
+                    (focus_parent_id != 0 && items[i].id == focus_parent_id) ||
+                    items[i].parent_id == focus_node_id) {
+                    keep_focus_1hop = true;
+                }
+            }
+            if (!keep_focus_1hop) {
                 float dist = aabb_distance_to_point(cx, cy, items[i].x, items[i].y, items[i].w, items[i].h);
                 float limit = (items[i].rnode != 0) ? exit_dist : enter_dist;
                 keep = (dist <= limit);
