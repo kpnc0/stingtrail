@@ -26,9 +26,13 @@ TARGET_GUI = $(BUILD_DIR)/stingtrail-gui
 TEST_GUI = $(BUILD_DIR)/test_gui
 GUI_LIBS = -lraven -lX11 -lm -lpthread
 
-.PHONY: all test test-cli test-mcp test-gui clean
+.PHONY: all test test-cli test-mcp test-gui benchmark clean
 
 all: $(TARGET_CLI) $(TARGET_MCP) $(TARGET_GUI)
+
+benchmark: $(TARGET_CLI)
+	cp $(TARGET_CLI) benchmark/stingtrail
+	chmod +x benchmark/stingtrail
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)

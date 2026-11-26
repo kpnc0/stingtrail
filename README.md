@@ -37,13 +37,13 @@ Stingtrail stores state in an append-only JSONL journal (`stingtrail.jsonl` by d
 ### Commands
 
 #### 1. Define Conceptual Nodes (`node`)
-Registers a high-level concept or milestone in the mission DAG.
+Registers a root node in the mission DAG.
 ```bash
-./build/stingtrail node <kind> "<name>" [--parent <id>]
+./build/stingtrail node <kind> "<name>" ["<detail>"]
 ```
-- `<kind>`: `premise`, `hypothesis`, `evidence`, `refutation`, `milestone`.
-- Returns: `{"status":"ok","id":<node_id>,"name":"..."}`.
-- *Deduplication*: Calling `node` with the same `kind` and `name` is idempotent and returns the existing node ID.
+- `<kind>`: `premise`, `asset`, `context`.
+- Returns: `node #<id> recorded`.
+- *Deduplication*: Calling `node` with the same `kind` and `name` is idempotent and returns the existing node ID (warns if a new `detail` was ignored).
 
 #### 2. Log Epistemic Reasoning & Context Helpers (`log`)
 Records thoughts (`hypothesis`) and passive context helpers (`observation`, `evidence`, `refutation`, `finding`) under a parent node.
@@ -286,3 +286,12 @@ stingtrail/
     ├── test_mcp.c               # MCP protocol & tool dispatch test suite
     └── test_gui.c               # Read-only GUI & vim navigation test suite
 ```
+
+---
+
+## 8. Agent Benchmark Kit (`benchmark/`)
+
+For A/B evaluation (**With `stingtrail`** vs **Without `stingtrail`**), `benchmark/` pairs matched instruction sets alongside a standalone copy of the `stingtrail` binary:
+- `benchmark/WITH_TOOL_INSTRUCTIONS.md`: Epistemic loop, exact CLI grammar, capacity/rebase rules, and warning/hint handling for agents using `./stingtrail`.
+- `benchmark/WITHOUT_TOOL_INSTRUCTIONS.md`: Control instructions for the without-tool baseline.
+- `benchmark/README.md`: Setup guide (`make benchmark`), task categories, and scoring metrics.

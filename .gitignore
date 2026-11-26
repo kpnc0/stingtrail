@@ -2,3 +2,6 @@ build/
 *.jsonl
 .agents/
 .stingtrail/
+benchmark/stingtrail
+benchmark/*.jsonl*
+benchmark/.stingtrail/
