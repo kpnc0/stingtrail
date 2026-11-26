@@ -1,9 +1,19 @@
 #define _POSIX_C_SOURCE 200809L
 #include "stingtrail.h"
 #include "stingtrail_mcp.h"
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static void cli_errf(const char *fmt, ...) {
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    sting_print_error(buf);
+}
 
 static void print_usage(FILE *out, const char *prog) {
     if (!out) out = stderr;
@@ -26,7 +36,7 @@ static void print_usage(FILE *out, const char *prog) {
         "  %sstatus%s %s[--json] [--focus <id>]%s                              Display board or focused subtree\n"
         "  %sfocus%s %s<id> [--json]%s                                         Display focused context (hourglass traversal)\n"
         "  %sexport%s %s[--focus <id>]%s                                       Export full or focused state JSON\n"
-        "  %srebase%s %s[<id> | --completed] [--dry-run] [--title <name>]%s  Compact completed chain(s) into .stingtrail/*.md + super-premise\n"
+        "  %srebase%s %s[<id> | --completed] [--dry-run] [--title <name>]%s  Compact completed chain(s) into .stingtrail/<ts>-stingtrail_<id>_<slug>.md\n"
         "  %shook%s                                                        Print synchronous shell hook integration script\n"
         "  %shook-eval%s %s<command>%s                                         Evaluate command under guard and active context\n"
         "  %scontext%s %s[get | set <id> | clear]%s                            Manage active hypothesis context\n"
@@ -65,14 +75,14 @@ int main(int argc, char **argv) {
     while (arg_idx < argc && argv[arg_idx][0] == '-') {
         if (strcmp(argv[arg_idx], "--db") == 0) {
             if (arg_idx + 1 >= argc) {
-                fprintf(stderr, "error: --db requires a file path\n");
+                cli_errf("--db requires a file path");
                 return 1;
             }
             db_path = argv[++arg_idx];
             arg_idx++;
         } else if (strcmp(argv[arg_idx], "--scope") == 0) {
             if (arg_idx + 1 >= argc) {
-                fprintf(stderr, "error: --scope requires a host list\n");
+                cli_errf("--scope requires a host list");
                 return 1;
             }
             scope_csv = argv[++arg_idx];
@@ -96,7 +106,7 @@ int main(int argc, char **argv) {
             printf("stingtrail %s\n", STINGTRAIL_VERSION);
             return 0;
         } else {
-            fprintf(stderr, "error: unrecognized option '%s'\n", argv[arg_idx]);
+            cli_errf("unrecognized option '%s'", argv[arg_idx]);
             return 1;
         }
     }
@@ -126,12 +136,12 @@ int main(int argc, char **argv) {
 
     if (strcmp(cmd, "node") == 0) {
         if (arg_idx >= argc) {
-            fprintf(stderr, "error: node requires <kind> and <name>\n");
+            cli_errf("node requires <kind> and <name>");
             return 1;
         }
         const char *kind = argv[arg_idx++];
         if (arg_idx >= argc) {
-            fprintf(stderr, "error: node requires <name>\n");
+            cli_errf("node requires <name>");
             return 1;
         }
         const char *name = argv[arg_idx++];
@@ -139,7 +149,7 @@ int main(int argc, char **argv) {
 
         uint32_t id = sting_state_add_node(&st, kind, name, detail, true);
         if (id == 0) {
-            fprintf(stderr, "error: failed to add node\n");
+            cli_errf("failed to add node '%s' (check node limit %d)", name, STINGTRAIL_MAX_NODES);
             return 1;
         }
         sting_color_t c = sting_color_get();
@@ -149,12 +159,12 @@ int main(int argc, char **argv) {
 
     if (strcmp(cmd, "log") == 0) {
         if (arg_idx >= argc) {
-            fprintf(stderr, "error: log requires <kind> and <summary>\n");
+            cli_errf("log requires <kind> and <summary>");
             return 1;
         }
         const char *kind = argv[arg_idx++];
         if (arg_idx >= argc) {
-            fprintf(stderr, "error: log requires <summary>\n");
+            cli_errf("log requires <summary>");
             return 1;
         }
         const char *summary = argv[arg_idx++];
@@ -179,7 +189,13 @@ int main(int argc, char **argv) {
 
         uint32_t id = sting_state_add_entry(&st, parent_id, kind, severity, summary, detail, true);
         if (id == 0) {
-            fprintf(stderr, "error: failed to log entry (verify parent_id exists)\n");
+            if (st.entry_count >= STINGTRAIL_MAX_ENTRIES) {
+                cli_errf("failed to log entry: entry capacity (%d) reached (use rebase --completed)", STINGTRAIL_MAX_ENTRIES);
+            } else if (parent_id > 0) {
+                cli_errf("failed to log entry: parent #%u does not exist in graph", parent_id);
+            } else {
+                cli_errf("failed to log entry (summary required)");
+            }
             return 1;
         }
         sting_color_t c = sting_color_get();
@@ -189,7 +205,7 @@ int main(int argc, char **argv) {
 
     if (strcmp(cmd, "plan") == 0) {
         if (arg_idx >= argc) {
-            fprintf(stderr, "error: plan requires <action>\n");
+            cli_errf("plan requires <action>");
             return 1;
         }
         const char *action = argv[arg_idx++];
@@ -219,7 +235,7 @@ int main(int argc, char **argv) {
         const char *err = NULL;
         uint32_t id = sting_state_plan_step(&st, parent_id, prio, target, action, why ? why : "", true, &err);
         if (id == 0) {
-            fprintf(stderr, "error: %s\n", err ? err : "failed to plan step");
+            sting_print_error(err ? err : "failed to plan step");
             return 1;
         }
         sting_color_t c = sting_color_get();
@@ -229,19 +245,30 @@ int main(int argc, char **argv) {
 
     if (strcmp(cmd, "step") == 0) {
         if (arg_idx >= argc) {
-            fprintf(stderr, "error: step requires <id> and <status>\n");
+            cli_errf("step requires <id> and <status>");
             return 1;
         }
         uint32_t step_id = (uint32_t)strtoul(argv[arg_idx++], NULL, 10);
         if (arg_idx >= argc) {
-            fprintf(stderr, "error: step requires <status>\n");
+            cli_errf("step #%u requires <status> (pending, in_progress, done, blocked)", step_id);
             return 1;
         }
         const char *status = argv[arg_idx++];
         const char *outcome = (arg_idx < argc) ? argv[arg_idx++] : "";
 
         if (!sting_state_update_step(&st, step_id, status, outcome, true)) {
-            fprintf(stderr, "error: invalid step id, status (valid: pending, in_progress, done, blocked), or missing outcome (required for done/blocked)\n");
+            bool step_found = false;
+            for (size_t i = 0; i < st.step_count; i++) {
+                if (st.steps[i].id == step_id) { step_found = true; break; }
+            }
+            if (!step_found) {
+                cli_errf("step #%u does not exist in graph", step_id);
+            } else if (strcmp(status, "pending") != 0 && strcmp(status, "in_progress") != 0 &&
+                       strcmp(status, "done") != 0 && strcmp(status, "blocked") != 0) {
+                cli_errf("invalid status '%s' for step #%u (valid: pending, in_progress, done, blocked)", status, step_id);
+            } else {
+                cli_errf("step #%u cannot be marked '%s' without an outcome", step_id, status);
+            }
             return 1;
         }
         sting_color_t c = sting_color_get();
@@ -252,7 +279,7 @@ int main(int argc, char **argv) {
 
     if (strcmp(cmd, "focus") == 0) {
         if (arg_idx >= argc) {
-            fprintf(stderr, "error: focus requires <id>\n");
+            cli_errf("focus requires <id>");
             return 1;
         }
         uint32_t target_id = (uint32_t)atoi(argv[arg_idx++]);
@@ -347,7 +374,7 @@ int main(int argc, char **argv) {
             } else if (argv[arg_idx][0] != '-' && opts.target_id == 0) {
                 opts.target_id = (uint32_t)strtoul(argv[arg_idx++], NULL, 10);
             } else {
-                fprintf(stderr, "error: unrecognized rebase argument '%s'\n", argv[arg_idx]);
+                cli_errf("unrecognized rebase argument '%s'", argv[arg_idx]);
                 return 1;
             }
         }
@@ -355,7 +382,7 @@ int main(int argc, char **argv) {
         const char *err = NULL;
         sting_rebase_result_t res;
         if (!sting_state_rebase(&st, &opts, &res, &err)) {
-            fprintf(stderr, "error: %s\n", err ? err : "rebase failed");
+            sting_print_error(err ? err : "rebase failed");
             return 1;
         }
 
@@ -518,12 +545,12 @@ int main(int argc, char **argv) {
         if (strcmp(argv[arg_idx], "set") == 0) {
             arg_idx++;
             if (arg_idx >= argc) {
-                fprintf(stderr, "error: context set requires <id>\n");
+                cli_errf("context set requires <id>");
                 return 1;
             }
             uint32_t id = (uint32_t)strtoul(argv[arg_idx++], NULL, 10);
             if (id == 0) {
-                fprintf(stderr, "error: context id must be > 0\n");
+                cli_errf("context id must be > 0");
                 return 1;
             }
 
@@ -549,12 +576,12 @@ int main(int argc, char **argv) {
                 }
             }
             if (!exists) {
-                fprintf(stderr, "error: id #%u does not exist in graph\n", id);
+                cli_errf("id #%u does not exist in graph", id);
                 return 1;
             }
 
             if (!sting_context_set(db_path, id)) {
-                fprintf(stderr, "error: failed to write context\n");
+                cli_errf("failed to write context for #%u", id);
                 return 1;
             }
             const char *k_col = sting_color_kind(&c, kind_str);
@@ -568,10 +595,10 @@ int main(int argc, char **argv) {
             return 0;
         }
 
-        fprintf(stderr, "error: unrecognized context subcommand '%s' (use get, set <id>, clear)\n", argv[arg_idx]);
+        cli_errf("unrecognized context subcommand '%s' (use get, set <id>, clear)", argv[arg_idx]);
         return 1;
     }
 
-    fprintf(stderr, "error: unrecognized command '%s' (see --help)\n", cmd);
+    cli_errf("unrecognized command '%s' (see --help)", cmd);
     return 1;
 }

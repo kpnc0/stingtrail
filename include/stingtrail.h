@@ -154,6 +154,7 @@ const char *sting_color_status(const sting_color_t *c, const char *status);
 const char *sting_color_priority(const sting_color_t *c, int priority);
 const char *sting_color_kind(const sting_color_t *c, const char *kind);
 const char *sting_color_severity(const sting_color_t *c, const char *sev);
+void sting_print_error(const char *msg);
 
 /* Output & Serialization */
 void sting_state_plan_counts(const sting_state_t *st, uint32_t root_id,

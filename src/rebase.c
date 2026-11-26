@@ -50,11 +50,13 @@ static size_t collect_chain_ids(const sting_state_t *st, uint32_t root_id,
     return cnt;
 }
 
+static char g_rebase_err[512];
+
 static bool chain_is_ready(const sting_state_t *st, const uint32_t *chain_ids, size_t chain_cnt,
                            size_t *entries_out, size_t *steps_out,
-                           size_t *wins_out, size_t *fails_out) {
-    size_t e_cnt = 0, s_cnt = 0, wins = 0, fails = 0;
-    bool ok = true;
+                           size_t *wins_out, size_t *fails_out,
+                           uint32_t *bad_ids_out, size_t bad_cap, size_t *bad_total_out) {
+    size_t e_cnt = 0, s_cnt = 0, wins = 0, fails = 0, bad_total = 0;
 
     for (size_t i = 0; i < st->entry_count; i++) {
         if (id_in_list(st->entries[i].id, chain_ids, chain_cnt)) {
@@ -69,7 +71,10 @@ static bool chain_is_ready(const sting_state_t *st, const uint32_t *chain_ids, s
             } else if (strcmp(st->steps[i].status, "blocked") == 0) {
                 fails++;
             } else {
-                ok = false;
+                if (bad_ids_out && bad_total < bad_cap) {
+                    bad_ids_out[bad_total] = st->steps[i].id;
+                }
+                bad_total++;
             }
         }
     }
@@ -78,28 +83,43 @@ static bool chain_is_ready(const sting_state_t *st, const uint32_t *chain_ids, s
     if (steps_out) *steps_out = s_cnt;
     if (wins_out) *wins_out = wins;
     if (fails_out) *fails_out = fails;
-    return ok;
+    if (bad_total_out) *bad_total_out = bad_total;
+    return bad_total == 0;
 }
 
-static void extract_journal_stem(const char *journal_path, char *stem, size_t stem_cap) {
-    const char *jp = (journal_path && journal_path[0]) ? journal_path : "stingtrail.jsonl";
-    const char *slash = strrchr(jp, '/');
-    const char *base = slash ? (slash + 1) : jp;
-    size_t len = strlen(base);
-    if (len >= stem_cap) len = stem_cap - 1;
-    memcpy(stem, base, len);
-    stem[len] = '\0';
-    char *dot = strrchr(stem, '.');
-    if (dot && strcmp(dot, ".jsonl") == 0) {
-        *dot = '\0';
+static void slugify_snake_20(const char *title, char *out, size_t out_cap) {
+    if (!out || out_cap == 0) return;
+    const char *src = title ? title : "";
+    if (strncmp(src, "[Rebased] ", 10) == 0) {
+        src += 10;
     }
-    if (stem[0] == '\0' && stem_cap > 1) {
-        snprintf(stem, stem_cap, "stingtrail");
+
+    size_t w = 0;
+    bool prev_us = true;
+    for (size_t i = 0; src[i] != '\0' && w < 20 && w + 1 < out_cap; i++) {
+        unsigned char ch = (unsigned char)src[i];
+        if (ch >= 'A' && ch <= 'Z') {
+            out[w++] = (char)(ch + ('a' - 'A'));
+            prev_us = false;
+        } else if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
+            out[w++] = (char)ch;
+            prev_us = false;
+        } else if (!prev_us) {
+            out[w++] = '_';
+            prev_us = true;
+        }
+    }
+    while (w > 0 && out[w - 1] == '_') {
+        w--;
+    }
+    out[w] = '\0';
+    if (w == 0 && out_cap > 8) {
+        snprintf(out, out_cap, "summary");
     }
 }
 
-static void build_summary_path(const char *journal_path, uint32_t root_id, const char *ts,
-                               bool create_dir,
+static void build_summary_path(const char *journal_path, uint32_t root_id, const char *title,
+                               const char *ts, bool create_dir,
                                char *fs_path_out, size_t fs_cap,
                                char *rel_label_out, size_t rel_cap) {
     const char *jp = (journal_path && journal_path[0]) ? journal_path : "stingtrail.jsonl";
@@ -115,8 +135,8 @@ static void build_summary_path(const char *journal_path, uint32_t root_id, const
         snprintf(dir, sizeof(dir), ".");
     }
 
-    char stem[64];
-    extract_journal_stem(jp, stem, sizeof(stem));
+    char slug[24];
+    slugify_snake_20(title, slug, sizeof(slug));
 
     char dir_path[300];
     if (strcmp(dir, ".") == 0) {
@@ -128,8 +148,8 @@ static void build_summary_path(const char *journal_path, uint32_t root_id, const
         mkdir(dir_path, 0755);
     }
 
-    snprintf(rel_label_out, rel_cap, ".stingtrail/%.48s-#%u-%.15s.md", stem, root_id, ts);
-    snprintf(fs_path_out, fs_cap, "%.300s/%.48s-#%u-%.15s.md", dir_path, stem, root_id, ts);
+    snprintf(rel_label_out, rel_cap, ".stingtrail/%.14s-stingtrail_%u_%.20s.md", ts, root_id, slug);
+    snprintf(fs_path_out, fs_cap, "%.300s/%.14s-stingtrail_%u_%.20s.md", dir_path, ts, root_id, slug);
 }
 
 static bool write_chain_markdown(const sting_state_t *st, uint32_t root_id,
@@ -381,8 +401,30 @@ static void compact_chain_from_state(sting_state_t *st, const uint32_t *chain_id
     }
 }
 
+static void format_unfinished_err(uint32_t root_id, const uint32_t *bad_ids, size_t bad_total) {
+    sting_buf_t b;
+    sting_buf_init(&b, g_rebase_err, sizeof(g_rebase_err));
+    sting_buf_append(&b, "cannot rebase #");
+    sting_buf_append_int(&b, (long long)root_id);
+    sting_buf_append(&b, ": unfinished plan(s) at ");
+    size_t shown = (bad_total < 5) ? bad_total : 5;
+    for (size_t i = 0; i < shown; i++) {
+        if (i > 0) sting_buf_append(&b, ", ");
+        sting_buf_append_ch(&b, '#');
+        sting_buf_append_int(&b, (long long)bad_ids[i]);
+    }
+    if (bad_total > shown) {
+        sting_buf_append(&b, " (+");
+        sting_buf_append_int(&b, (long long)(bad_total - shown));
+        sting_buf_append(&b, " more)");
+    }
+    sting_buf_append(&b, " (all plans must be done or blocked)");
+}
+
 static bool rebase_single_chain(sting_state_t *st, uint32_t root_id, const char *custom_title,
-                                bool dry_run, sting_rebase_result_t *res, const char **err_out) {
+                                bool dry_run, uint32_t *sim_next_id, bool *unfinished_out,
+                                sting_rebase_result_t *res, const char **err_out) {
+    if (unfinished_out) *unfinished_out = false;
     const char *orig_title = NULL;
     const char *orig_kind = "premise";
     bool is_root_node = false;
@@ -405,48 +447,57 @@ static bool rebase_single_chain(sting_state_t *st, uint32_t root_id, const char 
         }
     }
     if (!orig_title) {
-        if (err_out) *err_out = "target_id not found among nodes or entries";
+        snprintf(g_rebase_err, sizeof(g_rebase_err), "node #%u not found among nodes or entries", root_id);
+        if (err_out) *err_out = g_rebase_err;
         return false;
     }
 
     uint32_t chain_ids[STING_MAX_TOTAL_ITEMS];
     size_t chain_cnt = collect_chain_ids(st, root_id, chain_ids, STING_MAX_TOTAL_ITEMS);
-    size_t e_cnt = 0, s_cnt = 0, wins = 0, fails = 0;
+    size_t e_cnt = 0, s_cnt = 0, wins = 0, fails = 0, bad_total = 0;
+    uint32_t bad_ids[5];
 
-    if (!chain_is_ready(st, chain_ids, chain_cnt, &e_cnt, &s_cnt, &wins, &fails)) {
-        if (err_out) *err_out = "cannot rebase chain: unfinished plans exist (all plans must be done or blocked)";
+    if (!chain_is_ready(st, chain_ids, chain_cnt, &e_cnt, &s_cnt, &wins, &fails, bad_ids, 5, &bad_total)) {
+        if (unfinished_out) *unfinished_out = true;
+        format_unfinished_err(root_id, bad_ids, bad_total);
+        if (err_out) *err_out = g_rebase_err;
         return false;
     }
     if (e_cnt == 0 && s_cnt == 0) {
-        if (err_out) *err_out = "chain has no entries or steps to summarize";
+        snprintf(g_rebase_err, sizeof(g_rebase_err), "cannot rebase #%u: chain has no entries or steps to summarize", root_id);
+        if (err_out) *err_out = g_rebase_err;
         return false;
     }
     if (!is_root_node && st->node_count >= STINGTRAIL_MAX_NODES) {
-        if (err_out) *err_out = "node capacity reached; rebase a root node first";
+        snprintf(g_rebase_err, sizeof(g_rebase_err), "cannot rebase #%u: node capacity (%d) reached; rebase a root node first",
+                 root_id, STINGTRAIL_MAX_NODES);
+        if (err_out) *err_out = g_rebase_err;
         return false;
     }
 
     char ts[16];
     sting_timestamp_now(ts, sizeof(ts));
 
+    const char *base_name = (custom_title && custom_title[0]) ? custom_title : orig_title;
+
     char fs_path[512];
     char rel_label[128];
-    build_summary_path(st->journal_path, root_id, ts, !dry_run,
+    build_summary_path(st->journal_path, root_id, base_name, ts, !dry_run,
                        fs_path, sizeof(fs_path), rel_label, sizeof(rel_label));
     if (!dry_run) {
         if (!write_chain_markdown(st, root_id, orig_title, orig_kind,
                                   chain_ids, chain_cnt, wins, fails, e_cnt, fs_path, ts)) {
-            if (err_out) *err_out = "failed to write .stingtrail summary markdown file";
+            snprintf(g_rebase_err, sizeof(g_rebase_err), "failed to write summary file for #%u", root_id);
+            if (err_out) *err_out = g_rebase_err;
             return false;
         }
     }
 
     sting_node_t super_node;
     memset(&super_node, 0, sizeof(super_node));
-    super_node.id = dry_run ? st->next_id : st->next_id++;
+    super_node.id = dry_run ? (*sim_next_id)++ : st->next_id++;
     snprintf(super_node.kind, sizeof(super_node.kind), "premise");
 
-    const char *base_name = (custom_title && custom_title[0]) ? custom_title : orig_title;
     if (strncmp(base_name, "[Rebased] ", 10) == 0) {
         snprintf(super_node.name, sizeof(super_node.name), "%.127s", base_name);
     } else {
@@ -497,6 +548,7 @@ bool sting_state_rebase(sting_state_t *st,
 
     sting_rebase_result_t res;
     memset(&res, 0, sizeof(res));
+    uint32_t sim_next_id = st->next_id;
 
     if (opts->all_completed) {
         uint32_t candidate_ids[STINGTRAIL_MAX_NODES];
@@ -504,12 +556,33 @@ bool sting_state_rebase(sting_state_t *st,
         for (size_t i = 0; i < st->node_count; i++) {
             candidate_ids[cand_cnt++] = st->nodes[i].id;
         }
+        uint32_t blocked_roots[8];
+        size_t blocked_cnt = 0;
         for (size_t i = 0; i < cand_cnt; i++) {
             const char *ignore_err = NULL;
-            rebase_single_chain(st, candidate_ids[i], NULL, opts->dry_run, &res, &ignore_err);
+            bool was_unfinished = false;
+            if (!rebase_single_chain(st, candidate_ids[i], NULL, opts->dry_run, &sim_next_id, &was_unfinished, &res, &ignore_err)) {
+                if (was_unfinished && blocked_cnt < 8) {
+                    blocked_roots[blocked_cnt++] = candidate_ids[i];
+                }
+            }
         }
         if (res.chains_rebased == 0) {
-            if (err_out) *err_out = "no completed chains ready to rebase";
+            if (blocked_cnt > 0) {
+                sting_buf_t b;
+                sting_buf_init(&b, g_rebase_err, sizeof(g_rebase_err));
+                sting_buf_append(&b, "no completed chains ready to rebase (unfinished plans under ");
+                for (size_t i = 0; i < blocked_cnt; i++) {
+                    if (i > 0) sting_buf_append(&b, ", ");
+                    sting_buf_append_ch(&b, '#');
+                    sting_buf_append_int(&b, (long long)blocked_roots[i]);
+                }
+                sting_buf_append_ch(&b, ')');
+            } else {
+                snprintf(g_rebase_err, sizeof(g_rebase_err),
+                         "no completed chains ready to rebase (all chains already compact)");
+            }
+            if (err_out) *err_out = g_rebase_err;
             return false;
         }
     } else {
@@ -517,7 +590,8 @@ bool sting_state_rebase(sting_state_t *st,
             if (err_out) *err_out = "rebase requires <id> or --completed";
             return false;
         }
-        if (!rebase_single_chain(st, opts->target_id, opts->title, opts->dry_run, &res, err_out)) {
+        bool was_unfinished = false;
+        if (!rebase_single_chain(st, opts->target_id, opts->title, opts->dry_run, &sim_next_id, &was_unfinished, &res, err_out)) {
             return false;
         }
     }

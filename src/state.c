@@ -251,7 +251,34 @@ uint32_t sting_state_plan_step(sting_state_t *st, uint32_t parent_id,
         return 0;
     }
     if (!is_hypothesis_id(st, parent_id)) {
-        if (err_out) *err_out = "every plan must belong to an existing hypothesis (--parent <hypothesis_id>)";
+        static char g_plan_err[256];
+        if (parent_id == 0) {
+            snprintf(g_plan_err, sizeof(g_plan_err),
+                     "every plan must belong to an existing hypothesis (--parent <hypothesis_id>)");
+        } else {
+            const char *found_kind = NULL;
+            for (size_t i = 0; i < st->node_count; i++) {
+                if (st->nodes[i].id == parent_id) { found_kind = st->nodes[i].kind; break; }
+            }
+            if (!found_kind) {
+                for (size_t i = 0; i < st->entry_count; i++) {
+                    if (st->entries[i].id == parent_id) { found_kind = st->entries[i].kind; break; }
+                }
+            }
+            if (!found_kind) {
+                for (size_t i = 0; i < st->step_count; i++) {
+                    if (st->steps[i].id == parent_id) { found_kind = "step"; break; }
+                }
+            }
+            if (found_kind) {
+                snprintf(g_plan_err, sizeof(g_plan_err),
+                         "cannot plan under #%u (%s): parent must be a hypothesis", parent_id, found_kind);
+            } else {
+                snprintf(g_plan_err, sizeof(g_plan_err),
+                         "cannot plan: parent #%u does not exist in graph (must be a hypothesis)", parent_id);
+            }
+        }
+        if (err_out) *err_out = g_plan_err;
         return 0;
     }
 
@@ -474,6 +501,32 @@ const char *sting_color_severity(const sting_color_t *c, const char *sev) {
     if (strcmp(sev, "low") == 0) return c->p3;
     if (strcmp(sev, "info") == 0) return c->dim;
     return "";
+}
+
+void sting_print_error(const char *msg) {
+    if (!msg) msg = "unknown error";
+    sting_color_t c = sting_color_get_for_stream(stderr);
+    if (!c.enabled) {
+        fprintf(stderr, "error: %s\n", msg);
+        return;
+    }
+
+    const char *red = "\033[1;31m";
+    const char *byel = "\033[1;93m";
+    fprintf(stderr, "%serror: ", red);
+    for (const char *p = msg; *p != '\0';) {
+        if (*p == '#' && p[1] >= '0' && p[1] <= '9') {
+            fputs(byel, stderr);
+            fputc(*p++, stderr);
+            while (*p >= '0' && *p <= '9') {
+                fputc(*p++, stderr);
+            }
+            fputs(red, stderr);
+        } else {
+            fputc(*p++, stderr);
+        }
+    }
+    fprintf(stderr, "%s\n", c.reset);
 }
 
 void sting_state_print_board(const sting_state_t *st) {
@@ -726,7 +779,9 @@ void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
     }
 
     if (!target_node && !target_entry && !target_step) {
-        fprintf(stderr, "error: id #%u not found in graph\n", target_id);
+        char err_buf[128];
+        snprintf(err_buf, sizeof(err_buf), "id #%u not found in graph", target_id);
+        sting_print_error(err_buf);
         return;
     }
 

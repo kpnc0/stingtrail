@@ -515,7 +515,7 @@ TEST(rebase_readiness_summary_and_compaction) {
     uint32_t s3 = sting_state_plan_step(&st, h2, 1, "api.local", "Run sqlmap", "", true, NULL);
     (void)s3;
 
-    /* 1. Attempting to rebase r1 while s2 is still pending MUST fail */
+    /* 1. Attempting to rebase r1 while s2 is still pending MUST fail and name #r1 and #s2 */
     sting_rebase_opts_t opts;
     memset(&opts, 0, sizeof(opts));
     opts.target_id = r1;
@@ -523,6 +523,8 @@ TEST(rebase_readiness_summary_and_compaction) {
     sting_rebase_result_t res;
     ASSERT_FALSE(sting_state_rebase(&st, &opts, &res, &err));
     ASSERT_TRUE(err != NULL && strstr(err, "unfinished") != NULL);
+    ASSERT_TRUE(strstr(err, "#1") != NULL);
+    ASSERT_TRUE(strstr(err, "#5") != NULL);
 
     /* Mark s2 blocked -> now r1 has only done/blocked steps */
     ASSERT_TRUE(sting_state_update_step(&st, s2, "blocked", "Rate-limited after 3 tries", true));
@@ -536,6 +538,9 @@ TEST(rebase_readiness_summary_and_compaction) {
     ASSERT_EQ_INT((int)st.step_count, 3);
     ASSERT_EQ_INT((int)sting_context_get(test_db), (int)h1);
 
+    /* Verify strict summary filename format: yyyymmddhhmmss-stingtrail_<id>_<snake20>.md */
+    ASSERT_TRUE(strstr(res.summary_path, "-stingtrail_1_auth_audit.md") != NULL);
+
     /* 3. Execute rebase --completed: compacts r1, leaves r2 untouched */
     memset(&opts, 0, sizeof(opts));
     opts.all_completed = true;
@@ -547,6 +552,7 @@ TEST(rebase_readiness_summary_and_compaction) {
     ASSERT_EQ_INT((int)st.entry_count, 1); /* h2 only */
     ASSERT_EQ_INT((int)st.step_count, 1);  /* s3 only */
     ASSERT_EQ_INT((int)sting_context_get(test_db), 0); /* stale context cleared */
+    ASSERT_TRUE(strstr(res.summary_path, "-stingtrail_1_auth_audit.md") != NULL);
 
     /* Verify .stingtrail markdown summary exists and contains facts + dead-ends */
     char fs_md[600];
@@ -570,8 +576,18 @@ TEST(rebase_readiness_summary_and_compaction) {
     ASSERT_EQ_INT((int)reloaded.step_count, 1);
     ASSERT_TRUE(strstr(reloaded.nodes[1].name, "[Rebased] Auth Audit") != NULL);
 
-    /* Attempting --completed again skips already-compact super-premise and rejects r2 */
+    /* Attempting --completed again skips already-compact super-premise and rejects r2, naming #r2 */
     ASSERT_FALSE(sting_state_rebase(&reloaded, &opts, &res, &err));
+    ASSERT_TRUE(err != NULL && strstr(err, "#8") != NULL);
+
+    /* Test snake_case 20-char truncation on long title */
+    uint32_t r3 = sting_state_add_node(&reloaded, "premise", "Very Long Premise Title With Extra Words", "", true);
+    sting_state_add_entry(&reloaded, r3, "observation", "info", "Context note", "", true);
+    opts.all_completed = false;
+    opts.target_id = r3;
+    opts.dry_run = true;
+    ASSERT_TRUE(sting_state_rebase(&reloaded, &opts, &res, &err));
+    ASSERT_TRUE(strstr(res.summary_path, "-stingtrail_12_very_long_premise_ti.md") != NULL);
 
     unlink(fs_md);
     unlink(test_db);

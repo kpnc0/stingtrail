@@ -138,7 +138,7 @@ Compacts completed chains (where every plan is terminal: `done` or `blocked`) in
 ./build/stingtrail rebase --completed
 ```
 - **Readiness Gate**: Rejects rebasing any chain that still has `pending` or `in_progress` steps.
-- **Markdown Archives**: Streams `Facts & Outcomes (Wins)`, `Dead-Ends & Refutations (Fails)`, and `Hypotheses & Context Helpers` into `.stingtrail/<db>-#<id>-<timestamp>.md` and links it from the new super-premise node's detail.
+- **Markdown Archives**: Streams `Facts & Outcomes (Wins)`, `Dead-Ends & Refutations (Fails)`, and `Hypotheses & Context Helpers` into `.stingtrail/yyyymmddhhmmss-stingtrail_<root_id>_<snake_case_20>.md` and links it from the new super-premise node's detail.
 
 ---
 
