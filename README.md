@@ -125,6 +125,21 @@ eval "$(./build/stingtrail hook)"
 - **Epistemic Discipline Gate**: Exploratory or mutative commands (`curl`, `nmap`, `make`, `python3`) are blocked if executed without an active hypothesis, prompting the agent to bind an intent.
 - **Automatic Step Attribution**: When an active context is set, exploratory commands are automatically planned and closed under the active hypothesis in `stingtrail.jsonl`.
 
+#### 10. Rebase & Chain Super-Summary (`rebase`)
+Compacts completed chains (where every plan is terminal: `done` or `blocked`) into lossless Markdown summaries under `.stingtrail/*.md` and replaces each compacted chain with a single `[Rebased]` super-premise `node`, keeping active `.jsonl` journals well within static memory limits.
+```bash
+# Preview compaction without modifying files
+./build/stingtrail rebase <id> --dry-run
+
+# Rebase a single completed chain (with optional custom super-premise title)
+./build/stingtrail rebase <id> [--title "<name>"]
+
+# Rebase all completed chains while leaving active/pending chains intact
+./build/stingtrail rebase --completed
+```
+- **Readiness Gate**: Rejects rebasing any chain that still has `pending` or `in_progress` steps.
+- **Markdown Archives**: Streams `Facts & Outcomes (Wins)`, `Dead-Ends & Refutations (Fails)`, and `Hypotheses & Context Helpers` into `.stingtrail/<db>-#<id>-<timestamp>.md` and links it from the new super-premise node's detail.
+
 ---
 
 ## 3. Operational Safety Guards
@@ -197,6 +212,7 @@ Stingtrail includes a zero-dependency Model Context Protocol (MCP) server wrappe
 5. **`stingtrail_status`**: Retrieve the mission board (ASCII text or JSON structure).
 6. **`stingtrail_export`**: Export the complete DAG state journal as JSON.
 7. **`stingtrail_guard`**: Validate arbitrary action commands and target hosts against destructive patterns and authorization scope.
+8. **`stingtrail_rebase`**: Compact completed chains (`done` or `blocked` only) into `.stingtrail/*.md` summaries and super-premise nodes.
 
 ### Exposed MCP Resources
 - `stingtrail://board`: Current formatted mission critical-thinking board (`text/plain`).
@@ -253,6 +269,7 @@ stingtrail/
 │   ├── gui.c                   # Raven DAG visualizer & vim hjkl navigation
 │   ├── state.c                 # In-memory DAG state manager & deduplicator
 │   ├── store.c                 # Append-only JSONL journal serialization & fsync
+│   ├── rebase.c                # Chain super-summary (.stingtrail/*.md) & atomic compaction
 │   ├── guard.c                 # Safety guard (destructive filter & scope check)
 │   └── json.c                  # Zero-dependency JSON string parser & serializer
 ├── simulations/

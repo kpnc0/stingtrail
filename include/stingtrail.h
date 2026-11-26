@@ -163,6 +163,30 @@ void sting_state_print_board(const sting_state_t *st);
 void sting_state_print_focused(const sting_state_t *st, uint32_t target_id);
 bool sting_state_focused_to_json(const sting_state_t *st, uint32_t target_id, char *out_buf, size_t out_cap);
 
+/* Rebase & Chain Super-Summary */
+typedef struct {
+    uint32_t target_id;   /* Root/subtree ID to rebase (ignored when all_completed is true) */
+    bool all_completed;   /* Rebase all ready chains whose steps are all done or blocked */
+    bool dry_run;         /* Validate and compute counts without writing files or mutating state */
+    const char *title;    /* Optional override title for the new super-premise node */
+} sting_rebase_opts_t;
+
+typedef struct {
+    size_t chains_rebased;
+    size_t nodes_removed;
+    size_t entries_removed;
+    size_t steps_removed;
+    size_t wins;
+    size_t fails;
+    uint32_t last_super_id;
+    char summary_path[512];
+} sting_rebase_result_t;
+
+bool sting_state_rebase(sting_state_t *st,
+                        const sting_rebase_opts_t *opts,
+                        sting_rebase_result_t *res_out,
+                        const char **err_out);
+
 /* Journal persistence */
 bool sting_store_load(sting_state_t *st);
 bool sting_store_append_line(const char *path, const char *json_line);

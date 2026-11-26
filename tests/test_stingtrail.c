@@ -489,6 +489,95 @@ TEST(terminal_color_subsystem_and_no_color) {
     ASSERT_EQ_INT(sting_color_get_mode(), 0);
 }
 
+TEST(rebase_readiness_summary_and_compaction) {
+    const char *test_db = "/tmp/test_tmp_rebase.jsonl";
+    unlink(test_db);
+    unlink("/tmp/test_tmp_rebase.jsonl.context");
+
+    sting_state_t st;
+    sting_state_init(&st, test_db);
+
+    /* Root 1: ready chain (1 done, 1 blocked, evidence + refutation) */
+    uint32_t r1 = sting_state_add_node(&st, "premise", "Auth Audit", "Scope A", true);
+    uint32_t o1 = sting_state_add_entry(&st, r1, "observation", "info", "Port 443 open", "", true);
+    uint32_t h1 = sting_state_add_entry(&st, o1, "hypothesis", "medium", "JWT alg=none accepted", "", true);
+    uint32_t s1 = sting_state_plan_step(&st, h1, 1, "api.local", "Test alg=none", "", true, NULL);
+    uint32_t s2 = sting_state_plan_step(&st, h1, 2, "api.local", "Check default creds", "", true, NULL);
+    sting_state_update_step(&st, s1, "done", "Accepted unsigned token", true);
+    sting_state_add_entry(&st, s1, "evidence", "high", "Admin token forged", "", true);
+    sting_state_add_entry(&st, s2, "refutation", "info", "Default creds disabled", "", true);
+    /* Context pointing inside r1 chain */
+    ASSERT_TRUE(sting_context_set(test_db, h1));
+
+    /* Root 2: unfinished chain (1 pending step) */
+    uint32_t r2 = sting_state_add_node(&st, "premise", "Active Fuzzing", "Scope B", true);
+    uint32_t h2 = sting_state_add_entry(&st, r2, "hypothesis", "info", "SQLi on search", "", true);
+    uint32_t s3 = sting_state_plan_step(&st, h2, 1, "api.local", "Run sqlmap", "", true, NULL);
+    (void)s3;
+
+    /* 1. Attempting to rebase r1 while s2 is still pending MUST fail */
+    sting_rebase_opts_t opts;
+    memset(&opts, 0, sizeof(opts));
+    opts.target_id = r1;
+    const char *err = NULL;
+    sting_rebase_result_t res;
+    ASSERT_FALSE(sting_state_rebase(&st, &opts, &res, &err));
+    ASSERT_TRUE(err != NULL && strstr(err, "unfinished") != NULL);
+
+    /* Mark s2 blocked -> now r1 has only done/blocked steps */
+    ASSERT_TRUE(sting_state_update_step(&st, s2, "blocked", "Rate-limited after 3 tries", true));
+
+    /* 2. Dry-run validates without mutating state or clearing context */
+    opts.dry_run = true;
+    ASSERT_TRUE(sting_state_rebase(&st, &opts, &res, &err));
+    ASSERT_EQ_INT((int)res.chains_rebased, 1);
+    ASSERT_EQ_INT((int)res.wins, 1);
+    ASSERT_EQ_INT((int)res.fails, 1);
+    ASSERT_EQ_INT((int)st.step_count, 3);
+    ASSERT_EQ_INT((int)sting_context_get(test_db), (int)h1);
+
+    /* 3. Execute rebase --completed: compacts r1, leaves r2 untouched */
+    memset(&opts, 0, sizeof(opts));
+    opts.all_completed = true;
+    ASSERT_TRUE(sting_state_rebase(&st, &opts, &res, &err));
+    ASSERT_EQ_INT((int)res.chains_rebased, 1);
+    ASSERT_EQ_INT((int)res.entries_removed, 4);
+    ASSERT_EQ_INT((int)res.steps_removed, 2);
+    ASSERT_EQ_INT((int)st.node_count, 2); /* r2 + new super-premise */
+    ASSERT_EQ_INT((int)st.entry_count, 1); /* h2 only */
+    ASSERT_EQ_INT((int)st.step_count, 1);  /* s3 only */
+    ASSERT_EQ_INT((int)sting_context_get(test_db), 0); /* stale context cleared */
+
+    /* Verify .stingtrail markdown summary exists and contains facts + dead-ends */
+    char fs_md[600];
+    snprintf(fs_md, sizeof(fs_md), "/tmp/%s", res.summary_path);
+    FILE *mf = fopen(fs_md, "r");
+    ASSERT_TRUE(mf != NULL);
+    char md_buf[4096];
+    size_t nread = fread(md_buf, 1, sizeof(md_buf) - 1, mf);
+    md_buf[nread] = '\0';
+    fclose(mf);
+    ASSERT_TRUE(strstr(md_buf, "Admin token forged") != NULL);
+    ASSERT_TRUE(strstr(md_buf, "Accepted unsigned token") != NULL);
+    ASSERT_TRUE(strstr(md_buf, "Rate-limited after 3 tries") != NULL);
+    ASSERT_TRUE(strstr(md_buf, "Default creds disabled") != NULL);
+
+    /* Reload from compacted JSONL and verify state survives reload */
+    sting_state_t reloaded;
+    sting_state_init(&reloaded, test_db);
+    ASSERT_EQ_INT((int)reloaded.node_count, 2);
+    ASSERT_EQ_INT((int)reloaded.entry_count, 1);
+    ASSERT_EQ_INT((int)reloaded.step_count, 1);
+    ASSERT_TRUE(strstr(reloaded.nodes[1].name, "[Rebased] Auth Audit") != NULL);
+
+    /* Attempting --completed again skips already-compact super-premise and rejects r2 */
+    ASSERT_FALSE(sting_state_rebase(&reloaded, &opts, &res, &err));
+
+    unlink(fs_md);
+    unlink(test_db);
+    unlink("/tmp/test_tmp_rebase.jsonl.context");
+}
+
 int main(void) {
     printf("=== Stingtrail Test Suite ===\n");
     RUN_TEST(json_buffer_and_escaping);
@@ -503,6 +592,7 @@ int main(void) {
     RUN_TEST(context_management_and_persistence);
     RUN_TEST(state_focus_traversal_and_json);
     RUN_TEST(terminal_color_subsystem_and_no_color);
+    RUN_TEST(rebase_readiness_summary_and_compaction);
 
     printf("=== Result: %d/%d tests passed ===\n", g_tests_passed, g_tests_run);
     return (g_tests_passed == g_tests_run) ? 0 : 1;

@@ -26,6 +26,7 @@ static void print_usage(FILE *out, const char *prog) {
         "  %sstatus%s %s[--json] [--focus <id>]%s                              Display board or focused subtree\n"
         "  %sfocus%s %s<id> [--json]%s                                         Display focused context (hourglass traversal)\n"
         "  %sexport%s %s[--focus <id>]%s                                       Export full or focused state JSON\n"
+        "  %srebase%s %s[<id> | --completed] [--dry-run] [--title <name>]%s  Compact completed chain(s) into .stingtrail/*.md + super-premise\n"
         "  %shook%s                                                        Print synchronous shell hook integration script\n"
         "  %shook-eval%s %s<command>%s                                         Evaluate command under guard and active context\n"
         "  %scontext%s %s[get | set <id> | clear]%s                            Manage active hypothesis context\n"
@@ -44,6 +45,7 @@ static void print_usage(FILE *out, const char *prog) {
         c.anchor, c.reset, c.dim, c.reset,
         c.anchor, c.reset, c.dim, c.reset,
         c.dim, c.reset, c.pending, c.reset, c.in_progress, c.reset, c.done, c.reset, c.blocked, c.reset,
+        c.anchor, c.reset, c.dim, c.reset,
         c.anchor, c.reset, c.dim, c.reset,
         c.anchor, c.reset, c.dim, c.reset,
         c.anchor, c.reset, c.dim, c.reset,
@@ -325,6 +327,45 @@ int main(int argc, char **argv) {
                 printf("%s\n", buf);
             }
         }
+        return 0;
+    }
+
+    if (strcmp(cmd, "rebase") == 0) {
+        sting_rebase_opts_t opts;
+        memset(&opts, 0, sizeof(opts));
+
+        while (arg_idx < argc) {
+            if (strcmp(argv[arg_idx], "--completed") == 0) {
+                opts.all_completed = true;
+                arg_idx++;
+            } else if (strcmp(argv[arg_idx], "--dry-run") == 0) {
+                opts.dry_run = true;
+                arg_idx++;
+            } else if (strcmp(argv[arg_idx], "--title") == 0 && arg_idx + 1 < argc) {
+                opts.title = argv[++arg_idx];
+                arg_idx++;
+            } else if (argv[arg_idx][0] != '-' && opts.target_id == 0) {
+                opts.target_id = (uint32_t)strtoul(argv[arg_idx++], NULL, 10);
+            } else {
+                fprintf(stderr, "error: unrecognized rebase argument '%s'\n", argv[arg_idx]);
+                return 1;
+            }
+        }
+
+        const char *err = NULL;
+        sting_rebase_result_t res;
+        if (!sting_state_rebase(&st, &opts, &res, &err)) {
+            fprintf(stderr, "error: %s\n", err ? err : "rebase failed");
+            return 1;
+        }
+
+        sting_color_t c = sting_color_get();
+        printf("%s%s%s: rebased %zu chain(s) -> super-premise %s#%u%s (%zu entries, %zu steps compacted; %zu done, %zu blocked)\n",
+               c.bold, opts.dry_run ? "rebase dry-run" : "rebase complete", c.reset,
+               res.chains_rebased,
+               c.anchor, res.last_super_id, c.reset,
+               res.entries_removed, res.steps_removed, res.wins, res.fails);
+        printf("  summary: %s\n", res.summary_path);
         return 0;
     }
 

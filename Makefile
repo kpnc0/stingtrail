@@ -4,7 +4,7 @@ CFLAGS ?= -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -pedantic -Ii
 BUILD_DIR = build
 
 # Core common sources (Zero-dependency libc only)
-SRC_COMMON = src/json.c src/guard.c src/store.c src/state.c
+SRC_COMMON = src/json.c src/guard.c src/store.c src/state.c src/rebase.c
 
 # MCP wrapper sources (Zero-dependency libc only)
 SRC_MCP_CORE = src/mcp.c $(SRC_COMMON)

@@ -355,6 +355,19 @@ static const char *TOOLS_LIST_JSON =
             "\"target_host\":{\"type\":\"string\",\"description\":\"Target host to validate against allowed scope\"}"
           "}"
         "}"
+      "},"
+      "{"
+        "\"name\":\"stingtrail_rebase\","
+        "\"description\":\"Compact completed chain(s) into .stingtrail/*.md summary and super-premise node\","
+        "\"inputSchema\":{"
+          "\"type\":\"object\","
+          "\"properties\":{"
+            "\"target_id\":{\"type\":\"integer\",\"description\":\"Root or subtree ID to rebase\"},"
+            "\"completed\":{\"type\":\"boolean\",\"description\":\"Rebase all completed chains (done/blocked only)\"},"
+            "\"dry_run\":{\"type\":\"boolean\",\"description\":\"Validate and preview counts without modifying files\"},"
+            "\"title\":{\"type\":\"string\",\"description\":\"Optional custom title for super-premise node\"}"
+          "}"
+        "}"
       "}"
     "]}";
 
@@ -638,6 +651,37 @@ int sting_mcp_dispatch_message(sting_state_t *st, const char *msg, char *out_buf
                 char res[256];
                 snprintf(res, sizeof(res), "{\"verdict\":\"deny\",\"reason\":\"%s\"}",
                          reason ? reason : "blocked by guard");
+                send_tool_result(&b, id_str, false, res);
+            }
+            return b.overflow ? -1 : (int)b.len;
+        }
+
+        if (strcmp(tool_name, "stingtrail_rebase") == 0) {
+            long long tid = extract_int_field(args, "target_id", 0);
+            bool completed = extract_bool_field(args, "completed", false);
+            bool dry_run = extract_bool_field(args, "dry_run", false);
+            char title[128];
+            extract_str_field(args, "title", title, sizeof(title));
+
+            sting_rebase_opts_t opts;
+            memset(&opts, 0, sizeof(opts));
+            opts.target_id = (tid > 0) ? (uint32_t)tid : 0;
+            opts.all_completed = completed;
+            opts.dry_run = dry_run;
+            opts.title = title[0] ? title : NULL;
+
+            const char *err = NULL;
+            sting_rebase_result_t rres;
+            if (!sting_state_rebase(st, &opts, &rres, &err)) {
+                char err_msg[256];
+                snprintf(err_msg, sizeof(err_msg), "error: %s", err ? err : "rebase failed");
+                send_tool_result(&b, id_str, true, err_msg);
+            } else {
+                char res[768];
+                snprintf(res, sizeof(res),
+                         "rebased %zu chain(s) -> super-premise #%u (%zu entries, %zu steps compacted; summary: %s)",
+                         rres.chains_rebased, rres.last_super_id,
+                         rres.entries_removed, rres.steps_removed, rres.summary_path);
                 send_tool_result(&b, id_str, false, res);
             }
             return b.overflow ? -1 : (int)b.len;

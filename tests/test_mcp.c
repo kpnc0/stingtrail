@@ -339,6 +339,29 @@ TEST(mcp_persistence) {
     unlink(test_db);
 }
 
+TEST(mcp_rebase_tool) {
+    sting_state_t st;
+    sting_state_init(&st, NULL);
+
+    uint32_t n1 = sting_state_add_node(&st, "premise", "MCP Rebase Root", "", false);
+    uint32_t h1 = sting_state_add_entry(&st, n1, "hypothesis", "info", "MCP Hyp", "", false);
+    uint32_t s1 = sting_state_plan_step(&st, h1, 1, NULL, "MCP Action", "", false, NULL);
+
+    char resp[4096];
+    const char *req_fail = "{\"jsonrpc\":\"2.0\",\"id\":90,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_rebase\",\"arguments\":{\"target_id\":1,\"dry_run\":true}}}";
+    int len = sting_mcp_dispatch_message(&st, req_fail, resp, sizeof(resp));
+    ASSERT_TRUE(len > 0);
+    ASSERT_TRUE(strstr(resp, "\"isError\":true") != NULL);
+    ASSERT_TRUE(strstr(resp, "unfinished") != NULL);
+
+    ASSERT_TRUE(sting_state_update_step(&st, s1, "done", "Verified ok", false));
+    const char *req_ok = "{\"jsonrpc\":\"2.0\",\"id\":91,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_rebase\",\"arguments\":{\"target_id\":1,\"dry_run\":true}}}";
+    len = sting_mcp_dispatch_message(&st, req_ok, resp, sizeof(resp));
+    ASSERT_TRUE(len > 0);
+    ASSERT_TRUE(strstr(resp, "\"isError\":false") != NULL);
+    ASSERT_TRUE(strstr(resp, "rebased 1 chain(s)") != NULL);
+}
+
 int main(void) {
     printf("=== Stingtrail MCP Test Suite ===\n");
     RUN_TEST(mcp_initialize_and_notifications);
@@ -351,6 +374,7 @@ int main(void) {
     RUN_TEST(mcp_resources);
     RUN_TEST(mcp_error_handling);
     RUN_TEST(mcp_persistence);
+    RUN_TEST(mcp_rebase_tool);
 
     printf("=== Result: %d/%d MCP tests passed ===\n", g_tests_passed, g_tests_run);
     return (g_tests_passed == g_tests_run) ? 0 : 1;
