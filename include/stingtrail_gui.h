@@ -23,11 +23,24 @@ extern "C" {
 #define STING_GLOW_RED_G    0.2314f
 #define STING_GLOW_RED_B    0.1882f
 
+//Adding color  #016064 to the mix
+#define STING_GLOW_BLUE_R		0.0039f
+#define STING_GLOW_BLUE_G   0.3765f
+#define STING_GLOW_BLUE_B   0.3922f
+
+
+#define STING_GLOW_PINK_R   0.9882f
+#define STING_GLOW_PINK_G   0.1804f
+#define STING_GLOW_PINK_B   0.6667f
+
 typedef enum {
     STING_GLOW_NONE   = 0,
     STING_GLOW_GREEN  = 1, /* Subtle green #29AB87 for successful/done nodes */
     STING_GLOW_ORANGE = 2, /* Orange #FF9500 for pending/in_progress nodes */
-    STING_GLOW_RED    = 3  /* Red #FF3B30 for blocked/dead-end nodes */
+    STING_GLOW_RED    = 3,  /* Red #FF3B30 for blocked/dead-end nodes */
+		STING_GLOW_BLUE		= 4,
+		STING_GLOW_PINK		= 5
+
 } sting_glow_type_t;
 
 typedef struct {

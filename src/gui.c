@@ -542,6 +542,8 @@ static const char *get_glow_border_color(sting_glow_type_t t) {
         case STING_GLOW_GREEN:  return "#29AB87";
         case STING_GLOW_ORANGE: return "#FF9500";
         case STING_GLOW_RED:    return "#FF3B30";
+				case STING_GLOW_BLUE:		return "#016064";
+				case STING_GLOW_PINK:		return "#FC46AA";	
         case STING_GLOW_NONE:
         default:                return "#333333";
     }
@@ -618,7 +620,12 @@ static void compute_semantic_glows(sting_gui_item_t *items, size_t total_items, 
                         items[i].glow_r = STING_GLOW_RED_R;
                         items[i].glow_g = STING_GLOW_RED_G;
                         items[i].glow_b = STING_GLOW_RED_B;
-                    }
+                    } else {
+												items[i].glow_type = STING_GLOW_PINK;
+												items[i].glow_r = STING_GLOW_PINK_R;
+												items[i].glow_g = STING_GLOW_PINK_G;
+												items[i].glow_b = STING_GLOW_PINK_B;
+										}
                     break;
                 }
             }
