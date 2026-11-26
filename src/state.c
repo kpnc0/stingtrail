@@ -127,6 +127,13 @@ static bool id_exists(const sting_state_t *st, uint32_t id) {
     return false;
 }
 
+static void persist_line_or_flag(sting_state_t *st, const sting_buf_t *b, const char *line) {
+    if (!st || !b) return;
+    if (b->overflow || !sting_store_append_line(st->journal_path, line)) {
+        st->persist_overflow = true;
+    }
+}
+
 uint32_t sting_state_add_node(sting_state_t *st, const char *kind,
                               const char *name, const char *detail,
                               bool persist) {
@@ -154,7 +161,7 @@ uint32_t sting_state_add_node(sting_state_t *st, const char *kind,
     memcpy(n->modified, n->created, sizeof(n->modified));
 
     if (persist && st->journal_path[0] != '\0') {
-        char line[2048];
+        char line[4000];
         sting_buf_t b;
         sting_buf_init(&b, line, sizeof(line));
         sting_buf_append(&b, "{\"op\":\"node\",\"id\":");
@@ -170,9 +177,7 @@ uint32_t sting_state_add_node(sting_state_t *st, const char *kind,
         sting_buf_append(&b, ",\"modified\":");
         sting_buf_append_json_str(&b, n->modified);
         sting_buf_append_ch(&b, '}');
-        if (!b.overflow) {
-            sting_store_append_line(st->journal_path, line);
-        }
+        persist_line_or_flag(st, &b, line);
     }
 
     return n->id;
@@ -210,7 +215,7 @@ uint32_t sting_state_add_entry(sting_state_t *st, uint32_t parent_id,
     memcpy(e->modified, e->created, sizeof(e->modified));
 
     if (persist && st->journal_path[0] != '\0') {
-        char line[2048];
+        char line[4000];
         sting_buf_t b;
         sting_buf_init(&b, line, sizeof(line));
         sting_buf_append(&b, "{\"op\":\"entry\",\"id\":");
@@ -230,9 +235,7 @@ uint32_t sting_state_add_entry(sting_state_t *st, uint32_t parent_id,
         sting_buf_append(&b, ",\"modified\":");
         sting_buf_append_json_str(&b, e->modified);
         sting_buf_append_ch(&b, '}');
-        if (!b.overflow) {
-            sting_store_append_line(st->journal_path, line);
-        }
+        persist_line_or_flag(st, &b, line);
     }
 
     return e->id;
@@ -306,7 +309,7 @@ uint32_t sting_state_plan_step(sting_state_t *st, uint32_t parent_id,
     memcpy(s->modified, s->created, sizeof(s->modified));
 
     if (persist && st->journal_path[0] != '\0') {
-        char line[2048];
+        char line[4000];
         sting_buf_t b;
         sting_buf_init(&b, line, sizeof(line));
         sting_buf_append(&b, "{\"op\":\"plan\",\"id\":");
@@ -326,9 +329,7 @@ uint32_t sting_state_plan_step(sting_state_t *st, uint32_t parent_id,
         sting_buf_append(&b, ",\"modified\":");
         sting_buf_append_json_str(&b, s->modified);
         sting_buf_append_ch(&b, '}');
-        if (!b.overflow) {
-            sting_store_append_line(st->journal_path, line);
-        }
+        persist_line_or_flag(st, &b, line);
     }
 
     return s->id;
@@ -366,7 +367,7 @@ bool sting_state_update_step(sting_state_t *st, uint32_t step_id,
     sting_timestamp_now(target_step->modified, sizeof(target_step->modified));
 
     if (persist && st->journal_path[0] != '\0') {
-        char line[2048];
+        char line[4000];
         sting_buf_t b;
         sting_buf_init(&b, line, sizeof(line));
         sting_buf_append(&b, "{\"op\":\"step_update\",\"step_id\":");
@@ -380,9 +381,7 @@ bool sting_state_update_step(sting_state_t *st, uint32_t step_id,
         sting_buf_append(&b, ",\"modified\":");
         sting_buf_append_json_str(&b, target_step->modified);
         sting_buf_append_ch(&b, '}');
-        if (!b.overflow) {
-            sting_store_append_line(st->journal_path, line);
-        }
+        persist_line_or_flag(st, &b, line);
     }
 
     return true;
@@ -503,17 +502,15 @@ const char *sting_color_severity(const sting_color_t *c, const char *sev) {
     return "";
 }
 
-void sting_print_error(const char *msg) {
-    if (!msg) msg = "unknown error";
+static void print_styled_diag(const char *label, const char *label_col, const char *msg) {
     sting_color_t c = sting_color_get_for_stream(stderr);
     if (!c.enabled) {
-        fprintf(stderr, "error: %s\n", msg);
+        fprintf(stderr, "%s: %s\n", label, msg);
         return;
     }
 
-    const char *red = "\033[1;31m";
     const char *byel = "\033[1;93m";
-    fprintf(stderr, "%serror: ", red);
+    fprintf(stderr, "%s%s: ", label_col, label);
     for (const char *p = msg; *p != '\0';) {
         if (*p == '#' && p[1] >= '0' && p[1] <= '9') {
             fputs(byel, stderr);
@@ -521,12 +518,53 @@ void sting_print_error(const char *msg) {
             while (*p >= '0' && *p <= '9') {
                 fputc(*p++, stderr);
             }
-            fputs(red, stderr);
+            fputs(label_col, stderr);
         } else {
             fputc(*p++, stderr);
         }
     }
     fprintf(stderr, "%s\n", c.reset);
+}
+
+void sting_print_error(const char *msg) {
+    print_styled_diag("error", "\033[1;31m", msg ? msg : "unknown error");
+}
+
+void sting_print_warning(const char *msg) {
+    print_styled_diag("warning", "\033[1;33m", msg ? msg : "warning");
+}
+
+void sting_print_hint(const char *msg) {
+    print_styled_diag("hint", "\033[36m", msg ? msg : "");
+}
+
+static size_t count_ready_rebase_chains(const sting_state_t *st, bool *target_ready_out, uint32_t single_root_id) {
+    size_t ready = 0;
+    if (target_ready_out) *target_ready_out = false;
+    for (size_t i = 0; i < st->node_count; i++) {
+        uint32_t rid = st->nodes[i].id;
+        if (single_root_id > 0 && rid != single_root_id) continue;
+        uint32_t reach[1024];
+        size_t cnt = collect_descendants(st, rid, reach, 1024);
+        if (cnt <= 1) continue; /* No descendant entries/steps to compact */
+        size_t unfinished = 0;
+        for (size_t s = 0; s < st->step_count; s++) {
+            bool in_sub = false;
+            for (size_t k = 1; k < cnt; k++) {
+                if (reach[k] == st->steps[s].id) { in_sub = true; break; }
+            }
+            if (in_sub &&
+                strcmp(st->steps[s].status, "done") != 0 &&
+                strcmp(st->steps[s].status, "blocked") != 0) {
+                unfinished++;
+            }
+        }
+        if (unfinished == 0) {
+            ready++;
+            if (target_ready_out && rid == single_root_id) *target_ready_out = true;
+        }
+    }
+    return ready;
 }
 
 void sting_state_print_board(const sting_state_t *st) {
@@ -617,6 +655,58 @@ void sting_state_print_board(const sting_state_t *st) {
                 }
             }
         }
+    }
+
+    printf("\n%sContext & Hints:%s\n", c.bold, c.reset);
+    if (st->journal_path[0] != '\0') {
+        uint32_t ctx_id = sting_context_get(st->journal_path);
+        if (ctx_id == 0) {
+            printf("  Active context: %snone%s (hint: set with 'stingtrail context set <hyp_id>')\n", c.dim, c.reset);
+        } else {
+            const char *ctx_kind = NULL;
+            const char *ctx_title = NULL;
+            for (size_t i = 0; i < st->node_count && !ctx_kind; i++) {
+                if (st->nodes[i].id == ctx_id) { ctx_kind = st->nodes[i].kind; ctx_title = st->nodes[i].name; }
+            }
+            for (size_t i = 0; i < st->entry_count && !ctx_kind; i++) {
+                if (st->entries[i].id == ctx_id) { ctx_kind = st->entries[i].kind; ctx_title = st->entries[i].summary; }
+            }
+            for (size_t i = 0; i < st->step_count && !ctx_kind; i++) {
+                if (st->steps[i].id == ctx_id) { ctx_kind = "step"; ctx_title = st->steps[i].action; }
+            }
+            if (!ctx_kind) {
+                printf("  Active context: %s#%u%s %s(stale: id not found in graph — run 'stingtrail context clear')%s\n",
+                       c.anchor, ctx_id, c.reset, c.in_progress, c.reset);
+            } else if (strcmp(ctx_kind, "hypothesis") != 0) {
+                printf("  Active context: %s#%u%s (%s: %s) %s[note: '%s' is not a hypothesis; 'plan'/'hook-eval' need a hypothesis id]%s\n",
+                       c.anchor, ctx_id, c.reset, ctx_kind, ctx_title, c.in_progress, ctx_kind, c.reset);
+            } else {
+                printf("  Active context: %s#%u%s (%s%s%s: %s)\n",
+                       c.anchor, ctx_id, c.reset, c.hyp, ctx_kind, c.reset, ctx_title);
+            }
+        }
+    }
+
+    bool high_cap = (st->node_count * 10 >= STINGTRAIL_MAX_NODES * 8) ||
+                    (st->entry_count * 10 >= STINGTRAIL_MAX_ENTRIES * 8) ||
+                    (st->step_count * 10 >= STINGTRAIL_MAX_STEPS * 8);
+    printf("  Capacity: nodes %zu/%d, entries %zu/%d, steps %zu/%d%s\n",
+           st->node_count, STINGTRAIL_MAX_NODES,
+           st->entry_count, STINGTRAIL_MAX_ENTRIES,
+           st->step_count, STINGTRAIL_MAX_STEPS,
+           high_cap ? " [APPROACHING LIMIT]" : "");
+
+    size_t ready_chains = count_ready_rebase_chains(st, NULL, 0);
+    if (ready_chains > 0) {
+        printf("  %sHint:%s %zu completed chain(s) ready to rebase — run 'stingtrail rebase --completed'\n",
+               c.pending, c.reset, ready_chains);
+    } else if (high_cap) {
+        printf("  %sHint:%s journal nearing capacity — finish open steps and run 'stingtrail rebase --completed'\n",
+               c.in_progress, c.reset);
+    }
+    if (st->dropped_nodes > 0 || st->dropped_entries > 0 || st->dropped_steps > 0 || st->dropped_long_lines > 0) {
+        printf("  %sOverflow:%s dropped %zu node(s), %zu entry(s), %zu step(s), %zu oversized line(s) on load\n",
+               c.blocked, c.reset, st->dropped_nodes, st->dropped_entries, st->dropped_steps, st->dropped_long_lines);
     }
 }
 
@@ -743,8 +833,11 @@ bool sting_context_clear(const char *journal_path) {
     return true;
 }
 
-void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
-    if (!st || target_id == 0) return;
+bool sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
+    if (!st || target_id == 0) {
+        sting_print_error("focus requires a valid node/entry/step ID (> 0)");
+        return false;
+    }
 
     /* 1. Locate target */
     const sting_node_t *target_node = NULL;
@@ -782,7 +875,8 @@ void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
         char err_buf[128];
         snprintf(err_buf, sizeof(err_buf), "id #%u not found in graph", target_id);
         sting_print_error(err_buf);
-        return;
+        sting_print_hint("run 'stingtrail status' to list valid node, entry, and step IDs");
+        return false;
     }
 
     sting_color_t c = sting_color_get();
@@ -820,11 +914,25 @@ void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
         for (size_t k = spine_count; k > 0; k--) {
             uint32_t anc = spine[k - 1];
             size_t depth = spine_count - k;
-            char indent[128];
-            indent[0] = '\0';
-            for (size_t d = 0; d < depth; d++) strcat(indent, "  ");
-            if (depth > 0) strcat(indent, "-> ");
-            else strcat(indent, "  ");
+            size_t shown = (depth > 16) ? 16 : depth;
+            char indent[64];
+            size_t pos = 0;
+            for (size_t d = 0; d < shown; d++) {
+                indent[pos++] = ' ';
+                indent[pos++] = ' ';
+            }
+            if (depth > 16) {
+                memcpy(indent + pos, "... ", 4);
+                pos += 4;
+            }
+            if (depth > 0) {
+                memcpy(indent + pos, "-> ", 3);
+                pos += 3;
+            } else {
+                memcpy(indent + pos, "  ", 2);
+                pos += 2;
+            }
+            indent[pos] = '\0';
 
             bool printed = false;
             for (size_t i = 0; i < st->node_count; i++) {
@@ -937,10 +1045,45 @@ void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
             }
         }
     }
+
+    if (spine_count >= 64 || reach_cnt >= 1024) {
+        printf("\n%sWarning:%s focused display hit traversal cap (spine: %zu/64, subtree: %zu/1024)\n",
+               c.in_progress, c.reset, spine_count, reach_cnt);
+    }
+    if (target_entry && strcmp(target_entry->kind, "hypothesis") == 0 && f_total == 0) {
+        printf("\n%sHint:%s propose a plan under this hypothesis: stingtrail plan \"<action>\" --parent %u\n",
+               c.pending, c.reset, target_id);
+    } else if (target_node) {
+        bool ready = false;
+        count_ready_rebase_chains(st, &ready, target_id);
+        if (ready) {
+            printf("\n%sHint:%s all steps under #%u are done/blocked — run 'stingtrail rebase %u' to compact\n",
+                   c.pending, c.reset, target_id, target_id);
+        }
+    }
+    return true;
 }
 
 bool sting_state_focused_to_json(const sting_state_t *st, uint32_t target_id, char *out_buf, size_t out_cap) {
     if (!st || target_id == 0 || !out_buf || out_cap == 0) return false;
+
+    /* Locate target first; fail explicitly when target_id does not exist */
+    bool target_found = false;
+    uint32_t target_pid = 0;
+    for (size_t i = 0; i < st->node_count; i++) {
+        if (st->nodes[i].id == target_id) { target_found = true; target_pid = 0; break; }
+    }
+    if (!target_found) {
+        for (size_t i = 0; i < st->entry_count; i++) {
+            if (st->entries[i].id == target_id) { target_found = true; target_pid = st->entries[i].parent_id; break; }
+        }
+    }
+    if (!target_found) {
+        for (size_t i = 0; i < st->step_count; i++) {
+            if (st->steps[i].id == target_id) { target_found = true; target_pid = st->steps[i].parent_id; break; }
+        }
+    }
+    if (!target_found) return false;
 
     sting_buf_t b;
     sting_buf_init(&b, out_buf, out_cap);
@@ -954,22 +1097,6 @@ bool sting_state_focused_to_json(const sting_state_t *st, uint32_t target_id, ch
     sting_buf_append_int(&b, (long long)f_total);
     sting_buf_append(&b, ",\"incomplete_plans\":");
     sting_buf_append_int(&b, (long long)f_inc);
-
-    /* Ancestors */
-    uint32_t target_pid = 0;
-    for (size_t i = 0; i < st->node_count; i++) {
-        if (st->nodes[i].id == target_id) { target_pid = 0; break; }
-    }
-    if (target_pid == 0) {
-        for (size_t i = 0; i < st->entry_count; i++) {
-            if (st->entries[i].id == target_id) { target_pid = st->entries[i].parent_id; break; }
-        }
-    }
-    if (target_pid == 0) {
-        for (size_t i = 0; i < st->step_count; i++) {
-            if (st->steps[i].id == target_id) { target_pid = st->steps[i].parent_id; break; }
-        }
-    }
 
     uint32_t spine[64];
     size_t spine_count = 0;
@@ -997,16 +1124,16 @@ bool sting_state_focused_to_json(const sting_state_t *st, uint32_t target_id, ch
     sting_buf_append(&b, "]");
 
     /* Combined Hourglass set: spine (ancestors) + target + descendants */
-    uint32_t reach[512];
+    uint32_t reach[1024];
     size_t reach_cnt = 0;
-    for (size_t k = 0; k < spine_count && reach_cnt < 512; k++) {
+    for (size_t k = 0; k < spine_count && reach_cnt < 1024; k++) {
         reach[reach_cnt++] = spine[k];
     }
-    if (reach_cnt < 512) {
+    if (reach_cnt < 1024) {
         reach[reach_cnt++] = target_id;
     }
 
-    for (int pass = 0; pass < 32; pass++) {
+    for (int pass = 0; pass < 1024; pass++) {
         bool added = false;
         for (size_t i = 0; i < st->entry_count; i++) {
             uint32_t id = st->entries[i].id;
@@ -1016,7 +1143,7 @@ bool sting_state_focused_to_json(const sting_state_t *st, uint32_t target_id, ch
             if (has) continue;
             for (size_t k = 0; k < reach_cnt; k++) {
                 if (reach[k] == pid) {
-                    if (reach_cnt < 512) { reach[reach_cnt++] = id; added = true; }
+                    if (reach_cnt < 1024) { reach[reach_cnt++] = id; added = true; }
                     break;
                 }
             }
@@ -1029,7 +1156,7 @@ bool sting_state_focused_to_json(const sting_state_t *st, uint32_t target_id, ch
             if (has) continue;
             for (size_t k = 0; k < reach_cnt; k++) {
                 if (reach[k] == pid) {
-                    if (reach_cnt < 512) { reach[reach_cnt++] = id; added = true; }
+                    if (reach_cnt < 1024) { reach[reach_cnt++] = id; added = true; }
                     break;
                 }
             }

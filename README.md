@@ -149,6 +149,10 @@ Stingtrail includes built-in safety guards to prevent autonomous agents from run
 1. **Destructive Command Filtering**: Blocks dangerous commands such as `rm -rf`, `mkfs`, raw block writes (`dd`), fork bombs (`:(){ :|:& };:`), mass permission resets, or pipe-to-shell.
 2. **Fail-Closed Scope Enforcement**: When `--scope` is configured, target hosts and URLs outside the authorization boundary are blocked with exit code `2`.
 3. **ANSI & Control Character Sanitization**: Strips escape sequences and terminal control characters from log inputs.
+4. **Overflow Warnings & Agent Diagnostics**:
+   - Emits colorized `error:` (red, bright-yellow `#<id>`), `warning:` (yellow), and `hint:` (cyan) messages on `stderr` without polluting `stdout` JSON exports.
+   - Detects and warns on journal load overflows (past `256` nodes, `512` entries, `256` steps, or `>4096`-byte lines), field truncations, `>=80%` capacity thresholds, JSON export buffer overflows (returning exit code `1` cleanly instead of silent empty output), and invalid/non-hypothesis active contexts.
+   - `status` displays a `Context & Hints` footer summarizing active context health, capacity usage, and ready-to-rebase chain counts.
 
 ---
 

@@ -6,13 +6,108 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void cli_errf(const char *fmt, ...) {
+static void cli_vdiag(void (*fn)(const char *), const char *fmt, va_list ap) {
     char buf[512];
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    fn(buf);
+}
+
+static void cli_errf(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, ap);
+    cli_vdiag(sting_print_error, fmt, ap);
     va_end(ap);
-    sting_print_error(buf);
+}
+
+static void cli_warnf(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    cli_vdiag(sting_print_warning, fmt, ap);
+    va_end(ap);
+}
+
+static void cli_hintf(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    cli_vdiag(sting_print_hint, fmt, ap);
+    va_end(ap);
+}
+
+static void warn_if_truncated(const char *field, const char *val, size_t field_cap) {
+    if (!val || field_cap == 0) return;
+    size_t len = strlen(val);
+    if (len >= field_cap) {
+        cli_warnf("field '%s' truncated from %zu to %zu chars", field, len, field_cap - 1);
+    }
+}
+
+static void warn_capacity_high(const char *what, size_t count, size_t max_cap) {
+    if (max_cap > 0 && count * 10 >= max_cap * 8) {
+        cli_warnf("%s capacity at %zu/%zu (%zu%%)", what, count, max_cap, (count * 100) / max_cap);
+        cli_hintf("run 'stingtrail rebase --completed' to compact finished chains into .stingtrail/*.md");
+    }
+}
+
+static bool find_graph_item(const sting_state_t *st, uint32_t id,
+                            const char **kind_out, const char **title_out) {
+    if (!st || id == 0) return false;
+    for (size_t i = 0; i < st->node_count; i++) {
+        if (st->nodes[i].id == id) {
+            if (kind_out) *kind_out = st->nodes[i].kind;
+            if (title_out) *title_out = st->nodes[i].name;
+            return true;
+        }
+    }
+    for (size_t i = 0; i < st->entry_count; i++) {
+        if (st->entries[i].id == id) {
+            if (kind_out) *kind_out = st->entries[i].kind;
+            if (title_out) *title_out = st->entries[i].summary;
+            return true;
+        }
+    }
+    for (size_t i = 0; i < st->step_count; i++) {
+        if (st->steps[i].id == id) {
+            if (kind_out) *kind_out = "step";
+            if (title_out) *title_out = st->steps[i].action;
+            return true;
+        }
+    }
+    return false;
+}
+
+static int emit_json_export(const sting_state_t *st, uint32_t focus_id) {
+    const size_t cap = 262144;
+    char *buf = malloc(cap);
+    if (!buf) {
+        cli_errf("failed to allocate %zu-byte JSON export buffer", cap);
+        return 1;
+    }
+
+    if (focus_id > 0 && !find_graph_item(st, focus_id, NULL, NULL)) {
+        free(buf);
+        cli_errf("id #%u not found in graph", focus_id);
+        cli_hintf("run 'stingtrail status' to list valid node, entry, and step IDs");
+        return 1;
+    }
+
+    bool ok = (focus_id > 0)
+        ? sting_state_focused_to_json(st, focus_id, buf, cap)
+        : sting_state_to_json(st, buf, cap);
+    if (!ok) {
+        free(buf);
+        cli_errf("JSON serialization overflowed %zu-byte buffer", cap);
+        cli_hintf("use 'stingtrail focus <id> --json' for a subtree or 'stingtrail rebase --completed' to compact");
+        return 1;
+    }
+
+    size_t len = strlen(buf);
+    if (focus_id == 0 && len >= 52428) {
+        cli_warnf("JSON export is %zu bytes (nearing 65536-byte fixed tool limit)", len);
+        cli_hintf("run 'stingtrail rebase --completed' or use 'stingtrail focus <id> --json'");
+    }
+    printf("%s\n", buf);
+    free(buf);
+    return 0;
 }
 
 static void print_usage(FILE *out, const char *prog) {
@@ -129,6 +224,14 @@ int main(int argc, char **argv) {
     sting_state_t st;
     sting_state_init(&st, db_path);
 
+    if (strcmp(cmd, "mcp") != 0 && strcmp(cmd, "mcp-stdio") != 0 &&
+        (st.dropped_nodes > 0 || st.dropped_entries > 0 ||
+         st.dropped_steps > 0 || st.dropped_long_lines > 0)) {
+        cli_warnf("journal load overflow: dropped %zu node(s), %zu entry(s), %zu step(s), %zu oversized line(s)",
+                  st.dropped_nodes, st.dropped_entries, st.dropped_steps, st.dropped_long_lines);
+        cli_hintf("run 'stingtrail rebase --completed' to compact or split into a new --db journal");
+    }
+
     if (scope_csv) {
         sting_scope_init(&st.scope, true);
         sting_scope_parse_csv(&st.scope, scope_csv);
@@ -147,13 +250,37 @@ int main(int argc, char **argv) {
         const char *name = argv[arg_idx++];
         const char *detail = (arg_idx < argc) ? argv[arg_idx++] : "";
 
+        if (strcmp(kind, "premise") != 0 && strcmp(kind, "asset") != 0 && strcmp(kind, "context") != 0) {
+            cli_warnf("unknown node kind '%s'; defaulted to 'asset' (valid: premise, asset, context)", kind);
+        }
+
+        size_t prev_nodes = st.node_count;
         uint32_t id = sting_state_add_node(&st, kind, name, detail, true);
         if (id == 0) {
-            cli_errf("failed to add node '%s' (check node limit %d)", name, STINGTRAIL_MAX_NODES);
+            cli_errf("failed to add node '%s' (node capacity %zu/%d)", name, st.node_count, STINGTRAIL_MAX_NODES);
+            cli_hintf("run 'stingtrail rebase --completed' to compact completed chains");
             return 1;
         }
+        warn_if_truncated("name", name, 128);
+        warn_if_truncated("detail", detail, 256);
+        if (st.persist_overflow) {
+            cli_warnf("node #%u exceeded persistence line buffer or failed disk write", id);
+        }
         sting_color_t c = sting_color_get();
-        printf("node %s#%u%s recorded\n", c.anchor, id, c.reset);
+        if (st.node_count == prev_nodes) {
+            printf("node %s#%u%s recorded (matched existing %s node)\n", c.anchor, id, c.reset, kind);
+            if (detail[0] != '\0') {
+                for (size_t i = 0; i < st.node_count; i++) {
+                    if (st.nodes[i].id == id && strcmp(st.nodes[i].detail, detail) != 0) {
+                        cli_warnf("existing node #%u reused; provided detail was ignored", id);
+                        break;
+                    }
+                }
+            }
+        } else {
+            printf("node %s#%u%s recorded\n", c.anchor, id, c.reset);
+        }
+        warn_capacity_high("node", st.node_count, STINGTRAIL_MAX_NODES);
         return 0;
     }
 
@@ -183,23 +310,43 @@ int main(int argc, char **argv) {
                 detail = argv[++arg_idx];
                 arg_idx++;
             } else {
-                arg_idx++;
+                cli_errf("unrecognized log argument '%s' (expected --parent N, --sev S, --detail D)", argv[arg_idx]);
+                return 1;
             }
+        }
+
+        if (strcmp(kind, "observation") != 0 && strcmp(kind, "hypothesis") != 0 &&
+            strcmp(kind, "evidence") != 0 && strcmp(kind, "refutation") != 0 &&
+            strcmp(kind, "finding") != 0) {
+            cli_warnf("unknown log kind '%s'; defaulted to 'observation' (valid: observation, hypothesis, evidence, refutation, finding)", kind);
+        }
+        if (strcmp(severity, "info") != 0 && strcmp(severity, "low") != 0 &&
+            strcmp(severity, "medium") != 0 && strcmp(severity, "high") != 0 &&
+            strcmp(severity, "critical") != 0) {
+            cli_warnf("unknown severity '%s'; defaulted to 'info' (valid: info, low, medium, high, critical)", severity);
         }
 
         uint32_t id = sting_state_add_entry(&st, parent_id, kind, severity, summary, detail, true);
         if (id == 0) {
             if (st.entry_count >= STINGTRAIL_MAX_ENTRIES) {
-                cli_errf("failed to log entry: entry capacity (%d) reached (use rebase --completed)", STINGTRAIL_MAX_ENTRIES);
+                cli_errf("failed to log entry: entry capacity (%zu/%d) reached", st.entry_count, STINGTRAIL_MAX_ENTRIES);
+                cli_hintf("run 'stingtrail rebase --completed' to compact finished chains");
             } else if (parent_id > 0) {
                 cli_errf("failed to log entry: parent #%u does not exist in graph", parent_id);
+                cli_hintf("run 'stingtrail status' to list valid parent IDs");
             } else {
-                cli_errf("failed to log entry (summary required)");
+                cli_errf("failed to log entry (non-empty summary required)");
             }
             return 1;
         }
+        warn_if_truncated("summary", summary, 160);
+        warn_if_truncated("detail", detail, 512);
+        if (st.persist_overflow) {
+            cli_warnf("entry #%u exceeded persistence line buffer or failed disk write", id);
+        }
         sting_color_t c = sting_color_get();
         printf("entry %s#%u%s logged\n", c.anchor, id, c.reset);
+        warn_capacity_high("entry", st.entry_count, STINGTRAIL_MAX_ENTRIES);
         return 0;
     }
 
@@ -228,18 +375,36 @@ int main(int argc, char **argv) {
                 target = argv[++arg_idx];
                 arg_idx++;
             } else {
-                arg_idx++;
+                cli_errf("unrecognized plan argument '%s' (expected --parent H, --why R, --prio 1-5, --target T)", argv[arg_idx]);
+                return 1;
             }
+        }
+
+        if (prio < 1 || prio > 5) {
+            cli_warnf("priority %d clamped to 1..5", prio);
         }
 
         const char *err = NULL;
         uint32_t id = sting_state_plan_step(&st, parent_id, prio, target, action, why ? why : "", true, &err);
         if (id == 0) {
             sting_print_error(err ? err : "failed to plan step");
+            if (st.step_count >= STINGTRAIL_MAX_STEPS) {
+                cli_hintf("step capacity at %zu/%d — run 'stingtrail rebase --completed' to compact finished chains",
+                          st.step_count, STINGTRAIL_MAX_STEPS);
+            } else if (parent_id == 0) {
+                cli_hintf("create or pick a hypothesis with 'stingtrail log hypothesis \"...\" --parent <premise_id>'");
+            }
             return 1;
+        }
+        warn_if_truncated("action", action, 256);
+        warn_if_truncated("target", target, 128);
+        if (why) warn_if_truncated("rationale", why, 384);
+        if (st.persist_overflow) {
+            cli_warnf("step #%u exceeded persistence line buffer or failed disk write", id);
         }
         sting_color_t c = sting_color_get();
         printf("step %s#%u%s planned\n", c.anchor, id, c.reset);
+        warn_capacity_high("step", st.step_count, STINGTRAIL_MAX_STEPS);
         return 0;
     }
 
@@ -263,13 +428,19 @@ int main(int argc, char **argv) {
             }
             if (!step_found) {
                 cli_errf("step #%u does not exist in graph", step_id);
+                cli_hintf("run 'stingtrail status' to list active steps");
             } else if (strcmp(status, "pending") != 0 && strcmp(status, "in_progress") != 0 &&
                        strcmp(status, "done") != 0 && strcmp(status, "blocked") != 0) {
                 cli_errf("invalid status '%s' for step #%u (valid: pending, in_progress, done, blocked)", status, step_id);
             } else {
                 cli_errf("step #%u cannot be marked '%s' without an outcome", step_id, status);
+                cli_hintf("example: stingtrail step %u %s \"concise result\"", step_id, status);
             }
             return 1;
+        }
+        warn_if_truncated("outcome", outcome, 384);
+        if (st.persist_overflow) {
+            cli_warnf("step #%u update exceeded persistence line buffer or failed disk write", step_id);
         }
         sting_color_t c = sting_color_get();
         const char *s_col = sting_color_status(&c, status);
@@ -282,21 +453,21 @@ int main(int argc, char **argv) {
             cli_errf("focus requires <id>");
             return 1;
         }
-        uint32_t target_id = (uint32_t)atoi(argv[arg_idx++]);
+        uint32_t target_id = (uint32_t)strtoul(argv[arg_idx++], NULL, 10);
         bool json_mode = false;
         while (arg_idx < argc) {
-            if (strcmp(argv[arg_idx], "--json") == 0) json_mode = true;
+            if (strcmp(argv[arg_idx], "--json") == 0) {
+                json_mode = true;
+            } else {
+                cli_errf("unrecognized focus argument '%s'", argv[arg_idx]);
+                return 1;
+            }
             arg_idx++;
         }
         if (json_mode) {
-            char buf[65536];
-            if (sting_state_focused_to_json(&st, target_id, buf, sizeof(buf))) {
-                printf("%s\n", buf);
-            }
-        } else {
-            sting_state_print_focused(&st, target_id);
+            return emit_json_export(&st, target_id);
         }
-        return 0;
+        return sting_state_print_focused(&st, target_id) ? 0 : 1;
     }
 
     if (strcmp(cmd, "status") == 0) {
@@ -305,56 +476,36 @@ int main(int argc, char **argv) {
         while (arg_idx < argc) {
             if (strcmp(argv[arg_idx], "--json") == 0) {
                 json_mode = true;
-            } else if (strcmp(argv[arg_idx], "--focus") == 0) {
-                if (arg_idx + 1 < argc) {
-                    focus_id = (uint32_t)atoi(argv[++arg_idx]);
-                }
+            } else if (strcmp(argv[arg_idx], "--focus") == 0 && arg_idx + 1 < argc) {
+                focus_id = (uint32_t)strtoul(argv[++arg_idx], NULL, 10);
+            } else {
+                cli_errf("unrecognized status argument '%s'", argv[arg_idx]);
+                return 1;
             }
             arg_idx++;
         }
-        if (focus_id > 0) {
-            if (json_mode) {
-                char buf[65536];
-                if (sting_state_focused_to_json(&st, focus_id, buf, sizeof(buf))) {
-                    printf("%s\n", buf);
-                }
-            } else {
-                sting_state_print_focused(&st, focus_id);
-            }
-        } else {
-            if (json_mode) {
-                char buf[65536];
-                if (sting_state_to_json(&st, buf, sizeof(buf))) {
-                    printf("%s\n", buf);
-                }
-            } else {
-                sting_state_print_board(&st);
-            }
+        if (json_mode) {
+            return emit_json_export(&st, focus_id);
         }
+        if (focus_id > 0) {
+            return sting_state_print_focused(&st, focus_id) ? 0 : 1;
+        }
+        sting_state_print_board(&st);
         return 0;
     }
 
     if (strcmp(cmd, "export") == 0) {
         uint32_t focus_id = 0;
         while (arg_idx < argc) {
-            if (strcmp(argv[arg_idx], "--focus") == 0) {
-                if (arg_idx + 1 < argc) {
-                    focus_id = (uint32_t)atoi(argv[++arg_idx]);
-                }
+            if (strcmp(argv[arg_idx], "--focus") == 0 && arg_idx + 1 < argc) {
+                focus_id = (uint32_t)strtoul(argv[++arg_idx], NULL, 10);
+            } else {
+                cli_errf("unrecognized export argument '%s'", argv[arg_idx]);
+                return 1;
             }
             arg_idx++;
         }
-        char buf[65536];
-        if (focus_id > 0) {
-            if (sting_state_focused_to_json(&st, focus_id, buf, sizeof(buf))) {
-                printf("%s\n", buf);
-            }
-        } else {
-            if (sting_state_to_json(&st, buf, sizeof(buf))) {
-                printf("%s\n", buf);
-            }
-        }
-        return 0;
+        return emit_json_export(&st, focus_id);
     }
 
     if (strcmp(cmd, "rebase") == 0) {
@@ -383,6 +534,12 @@ int main(int argc, char **argv) {
         sting_rebase_result_t res;
         if (!sting_state_rebase(&st, &opts, &res, &err)) {
             sting_print_error(err ? err : "rebase failed");
+            if (opts.target_id > 0) {
+                cli_hintf("inspect blocked/pending steps with 'stingtrail focus %u' or update them via 'stingtrail step <id> done|blocked \"<outcome>\"'",
+                          opts.target_id);
+            } else {
+                cli_hintf("inspect incomplete plans with 'stingtrail status' or run 'stingtrail rebase <root_id>' on a finished chain");
+            }
             return 1;
         }
 
@@ -501,9 +658,12 @@ int main(int argc, char **argv) {
             const char *err = NULL;
             uint32_t sid = sting_state_plan_step(&st, active_ctx, 2, "", action_cmd,
                                                  "Auto-captured via synchronous shell hook", true, &err);
-            if (sid > 0) {
-                printf("%u\n", sid);
+            if (sid == 0) {
+                sting_print_error(err ? err : "failed to auto-plan hook command");
+                cli_hintf("bind shell context to an active hypothesis: %s context set <hyp_id>", argv[0]);
+                return 126;
             }
+            printf("%u\n", sid);
             return 0;
         }
 
@@ -515,28 +675,29 @@ int main(int argc, char **argv) {
         if (arg_idx >= argc || strcmp(argv[arg_idx], "get") == 0) {
             uint32_t active_id = sting_context_get(db_path);
             if (active_id == 0) {
-                printf("Active context: %snone%s (no hypothesis/premise active)\n", c.dim, c.reset);
+                printf("Active context: %snone%s (no hypothesis active)\n", c.dim, c.reset);
+                cli_hintf("set an active hypothesis with 'stingtrail context set <hyp_id>'");
             } else {
-                bool found = false;
-                for (size_t i = 0; i < st.node_count; i++) {
-                    if (st.nodes[i].id == active_id) {
-                        printf("Active context: %s#%u%s (%s: %s)\n", c.anchor, active_id, c.reset, st.nodes[i].kind, st.nodes[i].name);
-                        found = true;
-                        break;
+                const char *kind_str = NULL;
+                const char *name_str = NULL;
+                if (!find_graph_item(&st, active_id, &kind_str, &name_str)) {
+                    printf("Active context: %s#%u%s (not in graph)\n", c.anchor, active_id, c.reset);
+                    cli_warnf("active context #%u no longer exists in graph (rebased or missing)", active_id);
+                    cli_hintf("run 'stingtrail context clear' or 'stingtrail context set <hyp_id>'");
+                } else {
+                    const char *k_col = sting_color_kind(&c, kind_str);
+                    if (strcmp(kind_str, "hypothesis") == 0) {
+                        size_t tot = 0, inc = 0;
+                        sting_state_plan_counts(&st, active_id, &tot, &inc);
+                        printf("Active context: %s#%u%s (%s%s%s: %s) [incomplete plans: %zu/%zu]\n",
+                               c.anchor, active_id, c.reset, k_col, kind_str, c.reset, name_str, inc, tot);
+                    } else {
+                        printf("Active context: %s#%u%s (%s%s%s: %s)\n",
+                               c.anchor, active_id, c.reset, k_col, kind_str, c.reset, name_str);
+                        cli_warnf("active context #%u is a '%s', not a hypothesis; 'hook-eval' auto-planning requires a hypothesis id",
+                                  active_id, kind_str);
+                        cli_hintf("switch context to a hypothesis: stingtrail context set <hyp_id>");
                     }
-                }
-                if (!found) {
-                    for (size_t i = 0; i < st.entry_count; i++) {
-                        if (st.entries[i].id == active_id) {
-                            const char *k_col = sting_color_kind(&c, st.entries[i].kind);
-                            printf("Active context: %s#%u%s (%s%s%s: %s)\n", c.anchor, active_id, c.reset, k_col, st.entries[i].kind, c.reset, st.entries[i].summary);
-                            found = true;
-                            break;
-                        }
-                    }
-                }
-                if (!found) {
-                    printf("Active context: %s#%u%s\n", c.anchor, active_id, c.reset);
                 }
             }
             return 0;
@@ -554,29 +715,11 @@ int main(int argc, char **argv) {
                 return 1;
             }
 
-            bool exists = false;
             const char *kind_str = "";
             const char *name_str = "";
-            for (size_t i = 0; i < st.node_count; i++) {
-                if (st.nodes[i].id == id) {
-                    exists = true;
-                    kind_str = st.nodes[i].kind;
-                    name_str = st.nodes[i].name;
-                    break;
-                }
-            }
-            if (!exists) {
-                for (size_t i = 0; i < st.entry_count; i++) {
-                    if (st.entries[i].id == id) {
-                        exists = true;
-                        kind_str = st.entries[i].kind;
-                        name_str = st.entries[i].summary;
-                        break;
-                    }
-                }
-            }
-            if (!exists) {
+            if (!find_graph_item(&st, id, &kind_str, &name_str)) {
                 cli_errf("id #%u does not exist in graph", id);
+                cli_hintf("run 'stingtrail status' to list valid IDs");
                 return 1;
             }
 
@@ -586,6 +729,10 @@ int main(int argc, char **argv) {
             }
             const char *k_col = sting_color_kind(&c, kind_str);
             printf("Active context set to %s#%u%s (%s%s%s: %s)\n", c.anchor, id, c.reset, k_col, kind_str, c.reset, name_str);
+            if (strcmp(kind_str, "hypothesis") != 0) {
+                cli_warnf("#%u is a '%s', not a hypothesis; 'hook-eval' auto-planning requires a hypothesis id", id, kind_str);
+                cli_hintf("log a hypothesis under #%u and run 'stingtrail context set <hyp_id>'", id);
+            }
             return 0;
         }
 

@@ -103,6 +103,11 @@ typedef struct {
     size_t step_count;
     uint32_t next_id;
     char journal_path[512];
+    size_t dropped_nodes;
+    size_t dropped_entries;
+    size_t dropped_steps;
+    size_t dropped_long_lines;
+    bool persist_overflow;
 } sting_state_t;
 
 void sting_state_init(sting_state_t *st, const char *journal_path);
@@ -155,13 +160,15 @@ const char *sting_color_priority(const sting_color_t *c, int priority);
 const char *sting_color_kind(const sting_color_t *c, const char *kind);
 const char *sting_color_severity(const sting_color_t *c, const char *sev);
 void sting_print_error(const char *msg);
+void sting_print_warning(const char *msg);
+void sting_print_hint(const char *msg);
 
 /* Output & Serialization */
 void sting_state_plan_counts(const sting_state_t *st, uint32_t root_id,
                              size_t *total_out, size_t *incomplete_out);
 bool sting_state_to_json(const sting_state_t *st, char *out_buf, size_t out_cap);
 void sting_state_print_board(const sting_state_t *st);
-void sting_state_print_focused(const sting_state_t *st, uint32_t target_id);
+bool sting_state_print_focused(const sting_state_t *st, uint32_t target_id);
 bool sting_state_focused_to_json(const sting_state_t *st, uint32_t target_id, char *out_buf, size_t out_cap);
 
 /* Rebase & Chain Super-Summary */

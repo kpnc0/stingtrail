@@ -86,6 +86,12 @@ bool sting_store_load(sting_state_t *st) {
     char line[4096];
     while (fgets(line, sizeof(line), f)) {
         size_t len = strlen(line);
+        if (len == sizeof(line) - 1 && line[len - 1] != '\n' && !feof(f)) {
+            int ch;
+            while ((ch = fgetc(f)) != EOF && ch != '\n') {}
+            st->dropped_long_lines++;
+            continue;
+        }
         while (len > 0 && (line[len - 1] == '\r' || line[len - 1] == '\n')) {
             line[--len] = '\0';
         }
@@ -113,6 +119,8 @@ bool sting_store_load(sting_state_t *st) {
                 snprintf(n->created, sizeof(n->created), "%s", created);
                 snprintf(n->modified, sizeof(n->modified), "%s", modified[0] ? modified : created);
                 if (n->id >= st->next_id) st->next_id = n->id + 1;
+            } else {
+                st->dropped_nodes++;
             }
         } else if (strcmp(op, "entry") == 0) {
             long long pid = parse_json_int_field(line, "parent_id", 0);
@@ -133,6 +141,8 @@ bool sting_store_load(sting_state_t *st) {
                 snprintf(e->created, sizeof(e->created), "%s", created);
                 snprintf(e->modified, sizeof(e->modified), "%s", modified[0] ? modified : created);
                 if (e->id >= st->next_id) st->next_id = e->id + 1;
+            } else {
+                st->dropped_entries++;
             }
         } else if (strcmp(op, "plan") == 0) {
             long long pid = parse_json_int_field(line, "parent_id", 0);
@@ -156,6 +166,8 @@ bool sting_store_load(sting_state_t *st) {
                 snprintf(s->created, sizeof(s->created), "%s", created);
                 snprintf(s->modified, sizeof(s->modified), "%s", modified[0] ? modified : created);
                 if (s->id >= st->next_id) st->next_id = s->id + 1;
+            } else {
+                st->dropped_steps++;
             }
         } else if (strcmp(op, "step_update") == 0) {
             long long step_id = parse_json_int_field(line, "step_id", 0);

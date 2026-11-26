@@ -594,6 +594,65 @@ TEST(rebase_readiness_summary_and_compaction) {
     unlink("/tmp/test_tmp_rebase.jsonl.context");
 }
 
+TEST(overflow_detection_and_focus_bounds) {
+    const char *ovf_db = "/tmp/test_tmp_overflow.jsonl";
+    unlink(ovf_db);
+
+    FILE *f = fopen(ovf_db, "w");
+    ASSERT_TRUE(f != NULL);
+    fprintf(f, "{\"op\":\"node\",\"id\":1,\"kind\":\"premise\",\"name\":\"Root\",\"detail\":\"\"}\n");
+    fprintf(f, "{\"op\":\"entry\",\"id\":2,\"parent_id\":1,\"kind\":\"hypothesis\",\"severity\":\"info\",\"summary\":\"H1\",\"detail\":\"\"}\n");
+    for (int i = 0; i < STINGTRAIL_MAX_STEPS + 3; i++) {
+        fprintf(f, "{\"op\":\"plan\",\"id\":%d,\"parent_id\":2,\"priority\":3,\"target\":\"\",\"action\":\"Step %d\",\"rationale\":\"\"}\n",
+                i + 3, i + 1);
+    }
+    /* Oversized line (>4096 bytes) should increment dropped_long_lines cleanly */
+    fprintf(f, "{\"op\":\"entry\",\"id\":999,\"parent_id\":1,\"kind\":\"observation\",\"severity\":\"info\",\"summary\":\"");
+    for (int i = 0; i < 4200; i++) fputc('x', f);
+    fprintf(f, "\",\"detail\":\"\"}\n");
+    fclose(f);
+
+    sting_state_t st;
+    sting_state_init(&st, ovf_db);
+    ASSERT_EQ_INT((int)st.step_count, STINGTRAIL_MAX_STEPS);
+    ASSERT_EQ_INT((int)st.dropped_steps, 3);
+    ASSERT_EQ_INT((int)st.dropped_long_lines, 1);
+
+    /* Missing focus target must return false in both text & JSON serializers */
+    char tiny[32];
+    ASSERT_FALSE(sting_state_print_focused(&st, 99999));
+    ASSERT_FALSE(sting_state_focused_to_json(&st, 99999, tiny, sizeof(tiny)));
+    ASSERT_FALSE(sting_state_to_json(&st, tiny, sizeof(tiny)));
+
+    /* Deep chain (>32 hops, reversed insertion check & >16-hop indent safety) */
+    sting_state_t deep;
+    sting_state_init(&deep, NULL);
+    uint32_t root = sting_state_add_node(&deep, "premise", "Deep Root", "", false);
+    uint32_t cur = root;
+    for (int i = 0; i < 40; i++) {
+        char sum[32];
+        snprintf(sum, sizeof(sum), "Hop %d", i + 1);
+        cur = sting_state_add_entry(&deep, cur, "observation", "info", sum, "", false);
+        ASSERT_TRUE(cur > 0);
+    }
+    ASSERT_TRUE(sting_state_print_focused(&deep, cur));
+
+    char *big_json = malloc(65536);
+    ASSERT_TRUE(big_json != NULL);
+    ASSERT_TRUE(sting_state_focused_to_json(&deep, root, big_json, 65536));
+    ASSERT_TRUE(strstr(big_json, "Hop 40") != NULL);
+    free(big_json);
+
+    /* Persistence overflow flag sets when journal_path cannot be written */
+    sting_state_t bad_persist;
+    sting_state_init(&bad_persist, "/nonexistent_dir_stingtrail/journal.jsonl");
+    uint32_t bn = sting_state_add_node(&bad_persist, "premise", "Unwritable", "", true);
+    ASSERT_TRUE(bn > 0);
+    ASSERT_TRUE(bad_persist.persist_overflow);
+
+    unlink(ovf_db);
+}
+
 int main(void) {
     printf("=== Stingtrail Test Suite ===\n");
     RUN_TEST(json_buffer_and_escaping);
@@ -609,6 +668,7 @@ int main(void) {
     RUN_TEST(state_focus_traversal_and_json);
     RUN_TEST(terminal_color_subsystem_and_no_color);
     RUN_TEST(rebase_readiness_summary_and_compaction);
+    RUN_TEST(overflow_detection_and_focus_bounds);
 
     printf("=== Result: %d/%d tests passed ===\n", g_tests_passed, g_tests_run);
     return (g_tests_passed == g_tests_run) ? 0 : 1;
