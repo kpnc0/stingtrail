@@ -156,6 +156,8 @@ const char *sting_color_kind(const sting_color_t *c, const char *kind);
 const char *sting_color_severity(const sting_color_t *c, const char *sev);
 
 /* Output & Serialization */
+void sting_state_plan_counts(const sting_state_t *st, uint32_t root_id,
+                             size_t *total_out, size_t *incomplete_out);
 bool sting_state_to_json(const sting_state_t *st, char *out_buf, size_t out_cap);
 void sting_state_print_board(const sting_state_t *st);
 void sting_state_print_focused(const sting_state_t *st, uint32_t target_id);

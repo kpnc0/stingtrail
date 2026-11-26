@@ -141,6 +141,8 @@ void sting_mcp_format_board(const sting_state_t *st, sting_buf_t *b) {
         sting_buf_append(b, "  (none)\n");
     } else {
         for (size_t i = 0; i < st->node_count; i++) {
+            size_t n_total = 0, n_inc = 0;
+            sting_state_plan_counts(st, st->nodes[i].id, &n_total, &n_inc);
             sting_buf_append(b, "  [#");
             sting_buf_append_int(b, (long long)st->nodes[i].id);
             sting_buf_append(b, "] (");
@@ -151,7 +153,11 @@ void sting_mcp_format_board(const sting_state_t *st, sting_buf_t *b) {
                 sting_buf_append(b, " \xe2\x80\x94 "); /* utf-8 em-dash */
                 sting_buf_append(b, st->nodes[i].detail);
             }
-            sting_buf_append(b, " (created: ");
+            sting_buf_append(b, " [incomplete plans: ");
+            sting_buf_append_int(b, (long long)n_inc);
+            sting_buf_append_ch(b, '/');
+            sting_buf_append_int(b, (long long)n_total);
+            sting_buf_append(b, "] (created: ");
             sting_buf_append(b, st->nodes[i].created[0] ? st->nodes[i].created : "-");
             sting_buf_append(b, ")\n");
         }
@@ -178,6 +184,15 @@ void sting_mcp_format_board(const sting_state_t *st, sting_buf_t *b) {
                 sting_buf_append(b, " | ");
                 sting_buf_append(b, st->entries[i].detail);
             }
+            if (strcmp(st->entries[i].kind, "hypothesis") == 0) {
+                size_t h_total = 0, h_inc = 0;
+                sting_state_plan_counts(st, st->entries[i].id, &h_total, &h_inc);
+                sting_buf_append(b, " [incomplete plans: ");
+                sting_buf_append_int(b, (long long)h_inc);
+                sting_buf_append_ch(b, '/');
+                sting_buf_append_int(b, (long long)h_total);
+                sting_buf_append_ch(b, ']');
+            }
             sting_buf_append(b, " (created: ");
             sting_buf_append(b, st->entries[i].created[0] ? st->entries[i].created : "-");
             sting_buf_append(b, ", modified: ");
@@ -186,9 +201,13 @@ void sting_mcp_format_board(const sting_state_t *st, sting_buf_t *b) {
         }
     }
 
+    size_t all_total = 0, all_inc = 0;
+    sting_state_plan_counts(st, 0, &all_total, &all_inc);
     sting_buf_append(b, "\nPlanned Next Steps (");
-    sting_buf_append_int(b, (long long)st->step_count);
-    sting_buf_append(b, "):\n");
+    sting_buf_append_int(b, (long long)all_total);
+    sting_buf_append(b, ", ");
+    sting_buf_append_int(b, (long long)all_inc);
+    sting_buf_append(b, " incomplete):\n");
     if (st->step_count == 0) {
         sting_buf_append(b, "  (none)\n");
     } else {
@@ -214,9 +233,12 @@ void sting_mcp_format_board(const sting_state_t *st, sting_buf_t *b) {
                 sting_buf_append(b, st->steps[i].created[0] ? st->steps[i].created : "-");
                 sting_buf_append(b, ", modified: ");
                 sting_buf_append(b, st->steps[i].modified[0] ? st->steps[i].modified : "-");
-                sting_buf_append(b, ")\n      why: ");
-                sting_buf_append(b, st->steps[i].rationale);
-                sting_buf_append_ch(b, '\n');
+                sting_buf_append(b, ")\n");
+                if (st->steps[i].rationale[0]) {
+                    sting_buf_append(b, "      why: ");
+                    sting_buf_append(b, st->steps[i].rationale);
+                    sting_buf_append_ch(b, '\n');
+                }
                 if (st->steps[i].outcome[0]) {
                     sting_buf_append(b, "      outcome: ");
                     sting_buf_append(b, st->steps[i].outcome);
@@ -279,17 +301,17 @@ static const char *TOOLS_LIST_JSON =
       "},"
       "{"
         "\"name\":\"stingtrail_plan\","
-        "\"description\":\"Propose a prioritized action step with mandatory why rationale\","
+        "\"description\":\"Propose a prioritized action step under an existing hypothesis (optional why rationale)\","
         "\"inputSchema\":{"
           "\"type\":\"object\","
           "\"properties\":{"
             "\"action\":{\"type\":\"string\",\"description\":\"Action description to execute\"},"
-            "\"why\":{\"type\":\"string\",\"description\":\"Mandatory rationale explaining why this action is required\"},"
+            "\"parent_id\":{\"type\":\"integer\",\"description\":\"Existing hypothesis ID that motivates this plan\"},"
+            "\"why\":{\"type\":\"string\",\"description\":\"Optional rationale explaining why this action is proposed\"},"
             "\"priority\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":5,\"description\":\"Priority 1 (highest) to 5 (lowest). Default: 3\"},"
-            "\"parent_id\":{\"type\":\"integer\",\"description\":\"Parent entry or node ID (default: 0)\"},"
             "\"target\":{\"type\":\"string\",\"description\":\"Optional target host or subject\"}"
           "},"
-          "\"required\":[\"action\",\"why\"]"
+          "\"required\":[\"action\",\"parent_id\"]"
         "}"
       "},"
       "{"
@@ -532,8 +554,6 @@ int sting_mcp_dispatch_message(sting_state_t *st, const char *msg, char *out_buf
 
             if (action[0] == '\0') {
                 send_tool_result(&b, id_str, true, "error: plan requires 'action'");
-            } else if (why[0] == '\0') {
-                send_tool_result(&b, id_str, true, "error: rationale is required for disciplined planning (why)");
             } else {
                 const char *err = NULL;
                 uint32_t sid = sting_state_plan_step(st, (uint32_t)pid, (int)prio,

@@ -150,44 +150,75 @@ TEST(reasoning_entries_and_steps) {
     ASSERT_EQ_INT(st.entries[0].parent_id, root_id);
     ASSERT_STR_EQ(st.entries[0].summary, "Target open port 8080");
 
-    /* Attempt to add step without rationale - must fail */
+    /* Attempt to plan step without a hypothesis (parent_id=0, premise, or observation) - must fail */
     const char *err = NULL;
-    uint32_t fail_step = sting_state_plan_step(&st, root_id, 1, "10.0.0.1", "Run gobuster", "", false, &err);
-    ASSERT_EQ_INT(fail_step, 0);
+    uint32_t fail_no_parent = sting_state_plan_step(&st, 0, 1, "10.0.0.1", "Run gobuster", "", false, &err);
+    ASSERT_EQ_INT(fail_no_parent, 0);
     ASSERT_TRUE(err != NULL);
-    ASSERT_TRUE(strstr(err, "rationale is required") != NULL);
+    ASSERT_TRUE(strstr(err, "hypothesis") != NULL);
 
-    /* Plan step with mandatory rationale */
     err = NULL;
-    uint32_t step_id = sting_state_plan_step(&st, root_id, 1, "10.0.0.1",
-                                            "Scan Tomcat directory", "Find admin interface endpoint",
-                                            false, &err);
+    uint32_t fail_premise = sting_state_plan_step(&st, root_id, 1, "10.0.0.1", "Run gobuster", "", false, &err);
+    ASSERT_EQ_INT(fail_premise, 0);
+    ASSERT_TRUE(err != NULL);
+    ASSERT_TRUE(strstr(err, "hypothesis") != NULL);
+
+    err = NULL;
+    uint32_t fail_obs = sting_state_plan_step(&st, entry_id, 1, "10.0.0.1", "Run gobuster", "", false, &err);
+    ASSERT_EQ_INT(fail_obs, 0);
+    ASSERT_TRUE(err != NULL);
+    ASSERT_TRUE(strstr(err, "hypothesis") != NULL);
+
+    /* Log a hypothesis (thought) and plan steps under it WITHOUT rationale (--why optional) */
+    uint32_t hyp_id = sting_state_add_entry(&st, entry_id, "hypothesis", "medium",
+                                            "Tomcat manager exposes default credentials", "", false);
+    ASSERT_TRUE(hyp_id > 0);
+
+    err = NULL;
+    uint32_t step_id = sting_state_plan_step(&st, hyp_id, 1, "10.0.0.1",
+                                             "Scan Tomcat directory", "",
+                                             false, &err);
     ASSERT_TRUE(step_id > 0);
     ASSERT_EQ_INT(st.step_count, 1);
     ASSERT_STR_EQ(st.steps[0].action, "Scan Tomcat directory");
-    ASSERT_STR_EQ(st.steps[0].rationale, "Find admin interface endpoint");
+    ASSERT_STR_EQ(st.steps[0].rationale, "");
     ASSERT_EQ_INT(st.steps[0].priority, 1);
     ASSERT_STR_EQ(st.steps[0].status, "pending");
 
     /* Priority clamping test */
-    uint32_t prio_high = sting_state_plan_step(&st, root_id, 99, NULL, "Action A", "Why A", false, NULL);
+    uint32_t prio_high = sting_state_plan_step(&st, hyp_id, 99, NULL, "Action A", "Why A", false, NULL);
     ASSERT_TRUE(prio_high > 0);
     ASSERT_EQ_INT(st.steps[1].priority, 5);
 
-    uint32_t prio_low = sting_state_plan_step(&st, root_id, -5, NULL, "Action B", "Why B", false, NULL);
+    uint32_t prio_low = sting_state_plan_step(&st, hyp_id, -5, NULL, "Action B", NULL, false, NULL);
     ASSERT_TRUE(prio_low > 0);
     ASSERT_EQ_INT(st.steps[2].priority, 1);
 
-    /* Update step lifecycle: pending -> in_progress -> done */
+    /* Incomplete plan count checks before and after completion */
+    size_t total_p = 0, inc_p = 0;
+    sting_state_plan_counts(&st, root_id, &total_p, &inc_p);
+    ASSERT_EQ_INT((int)total_p, 3);
+    ASSERT_EQ_INT((int)inc_p, 3);
+
+    /* Update step lifecycle: pending -> in_progress -> done (done/blocked require outcome) */
     bool ok = sting_state_update_step(&st, step_id, "in_progress", "Wordlist scanning started", false);
     ASSERT_TRUE(ok);
     ASSERT_STR_EQ(st.steps[0].status, "in_progress");
     ASSERT_STR_EQ(st.steps[0].outcome, "Wordlist scanning started");
 
+    ok = sting_state_update_step(&st, step_id, "done", "", false);
+    ASSERT_FALSE(ok);
+    ok = sting_state_update_step(&st, step_id, "blocked", NULL, false);
+    ASSERT_FALSE(ok);
+
     ok = sting_state_update_step(&st, step_id, "done", "Discovered /manager/html endpoint", false);
     ASSERT_TRUE(ok);
     ASSERT_STR_EQ(st.steps[0].status, "done");
     ASSERT_STR_EQ(st.steps[0].outcome, "Discovered /manager/html endpoint");
+
+    sting_state_plan_counts(&st, root_id, &total_p, &inc_p);
+    ASSERT_EQ_INT((int)total_p, 3);
+    ASSERT_EQ_INT((int)inc_p, 2);
 
     /* Invalid status rejected */
     ok = sting_state_update_step(&st, step_id, "invalid_status", "outcome", false);
@@ -207,8 +238,11 @@ TEST(journal_persistence_and_reload) {
     uint32_t e1 = sting_state_add_entry(&s1, n1, "observation", "medium", "Port 443 active", "TLS certificate expired", true);
     ASSERT_TRUE(e1 > 0);
 
+    uint32_t h1 = sting_state_add_entry(&s1, e1, "hypothesis", "medium", "Weak TLS ciphers enabled", "", true);
+    ASSERT_TRUE(h1 > 0);
+
     const char *err = NULL;
-    uint32_t st1 = sting_state_plan_step(&s1, n1, 2, "target.org", "Analyze TLS cipher suites", "Check weak ciphers", true, &err);
+    uint32_t st1 = sting_state_plan_step(&s1, h1, 2, "target.org", "Analyze TLS cipher suites", "Check weak ciphers", true, &err);
     ASSERT_TRUE(st1 > 0);
 
     bool ok = sting_state_update_step(&s1, st1, "done", "Vulnerable to RC4 deprecation", true);
@@ -222,7 +256,7 @@ TEST(journal_persistence_and_reload) {
     sting_state_init(&s2, test_db);
 
     ASSERT_EQ_INT(s2.node_count, 1);
-    ASSERT_EQ_INT(s2.entry_count, 1);
+    ASSERT_EQ_INT(s2.entry_count, 2);
     ASSERT_EQ_INT(s2.step_count, 1);
 
     ASSERT_STR_EQ(s2.nodes[0].name, "Penetration Test Root");
@@ -237,8 +271,8 @@ TEST(journal_persistence_and_reload) {
 
     sting_state_t s3;
     sting_state_init(&s3, test_db);
-    ASSERT_EQ_INT(s3.entry_count, 2);
-    ASSERT_STR_EQ(s3.entries[1].summary, "SSL Renegotiation DoS");
+    ASSERT_EQ_INT(s3.entry_count, 3);
+    ASSERT_STR_EQ(s3.entries[2].summary, "SSL Renegotiation DoS");
 
     unlink(test_db);
 }
@@ -249,7 +283,8 @@ TEST(state_export_and_board) {
 
     uint32_t n = sting_state_add_node(&st, "premise", "Export Test Premise", "Testing JSON dump", false);
     sting_state_add_entry(&st, n, "observation", "info", "Export observation summary", "Detail notes", false);
-    sting_state_plan_step(&st, n, 1, "test.local", "Execute step 1", "Rationale 1", false, NULL);
+    uint32_t h = sting_state_add_entry(&st, n, "hypothesis", "info", "Export hypothesis", "", false);
+    sting_state_plan_step(&st, h, 1, "test.local", "Execute step 1", "Rationale 1", false, NULL);
 
     /* JSON serialization */
     char json_buf[4096];
@@ -257,6 +292,7 @@ TEST(state_export_and_board) {
     ASSERT_TRUE(ok);
 
     ASSERT_TRUE(strstr(json_buf, "\"version\":\"" STINGTRAIL_VERSION "\"") != NULL);
+    ASSERT_TRUE(strstr(json_buf, "\"incomplete_plans\":1") != NULL);
     ASSERT_TRUE(strstr(json_buf, "\"Export Test Premise\"") != NULL);
     ASSERT_TRUE(strstr(json_buf, "\"Export observation summary\"") != NULL);
     ASSERT_TRUE(strstr(json_buf, "\"Execute step 1\"") != NULL);

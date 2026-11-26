@@ -45,33 +45,35 @@ Registers a high-level concept or milestone in the mission DAG.
 - Returns: `{"status":"ok","id":<node_id>,"name":"..."}`.
 - *Deduplication*: Calling `node` with the same `kind` and `name` is idempotent and returns the existing node ID.
 
-#### 2. Log Epistemic Reasoning (`log`)
-Records granular observations, hypotheses, tests, evidence, or refutations under a parent node.
+#### 2. Log Epistemic Reasoning & Context Helpers (`log`)
+Records thoughts (`hypothesis`) and passive context helpers (`observation`, `evidence`, `refutation`, `finding`) under a parent node.
 ```bash
-./build/stingtrail log <kind> "<content>" [--parent <id>]
+./build/stingtrail log <kind> "<summary>" [--parent <id>] [--sev <severity>] [--detail "<detail>"]
 ```
-- `<kind>`: `observation`, `hypothesis`, `test`, `evidence`, `refutation`.
-- Returns: `{"status":"ok","entry_id":<id>,"parent":<id>}`.
+- `<kind>`: `hypothesis`, `observation`, `evidence`, `refutation`, `finding`.
+- **Iterative Loop**: `thought (hypothesis) -> plan (step) -> fail/win (done/blocked + outcome) -> next thought (hypothesis)`, with `premise`/`asset`/`context` and `observation`/`evidence`/`refutation`/`finding` acting as passive context helpers.
 
 #### 3. Plan Operational Steps (`plan`)
-Enforces proactive planning with mandatory `--why` rationale before execution.
+Enforces strict hypothesis-driven planning: every plan must be linked to an existing `hypothesis` via `--parent <hypothesis_id>`.
 ```bash
-./build/stingtrail plan "<action>" --why "<rationale>" [--priority 1-5] [--parent <id>]
+./build/stingtrail plan "<action>" --parent <hypothesis_id> [--why "<rationale>"] [--prio 1-5] [--target <host>]
 ```
-- `--why <rationale>` is **mandatory**. Unjustified actions will be rejected with an error.
-- Priority ranges from `1` (critical) to `5` (low). Default is `2`.
-- Returns: `{"status":"ok","step_id":<id>,"priority":<p>,"status":"pending"}`.
+- `--parent <hypothesis_id>` is **mandatory** and must point to an existing `hypothesis` entry.
+- `--why <rationale>` is **optional**.
+- Priority ranges from `1` (critical) to `5` (low). Default is `3`.
+- Returns: `step #<id> planned`.
 
 #### 4. Update Step Lifecycle (`step`)
-Updates step execution state with concrete results.
+Updates step execution state with concrete results (`done` = win, `blocked` = fail).
 ```bash
 ./build/stingtrail step <id> <status> "<outcome>"
 ```
-- `<status>`: `in_progress`, `done`, `blocked`, `abandoned`.
-- Returns: `{"status":"ok","step_id":<id>,"status":"<status>"}`.
+- `<status>`: `pending`, `in_progress`, `done`, `blocked`.
+- A non-empty `<outcome>` is **mandatory** when marking a step `done` or `blocked`.
+- Returns: `step #<id> updated to <status>`.
 
 #### 5. Mission Status Board (`status`)
-Prints an ASCII status board grouping all planned, active, completed, and blocked steps by priority (`[P1]` through `[P5]`).
+Prints an ASCII status board showing incomplete plan counts per root node (`[incomplete plans: X/Y]`), per hypothesis, and globally (`Planned Next Steps (total, incomplete)`), grouping planned, active, completed, and blocked steps by priority (`[P1]` through `[P5]`).
 ```bash
 ./build/stingtrail status
 ```
@@ -141,22 +143,22 @@ Stingtrail includes built-in safety guards to prevent autonomous agents from run
 # 1. Establish the engagement scope and premise
 PREMISE_ID=$(./build/stingtrail node premise "Authorized Internal Penetration Test" | jq -r .id)
 
-# 2. Record an observation
-./build/stingtrail log observation "Target responds at 10.10.10.25; Port 80 and 443 open" --parent $PREMISE_ID
+# 2. Record an observation (passive context helper)
+./build/stingtrail log observation "Target responds at 10.10.10.25; Port 80 and 443 open" --parent 1
 
-# 3. Formulate a hypothesis
-HYP_ID=$(./build/stingtrail node hypothesis "Web Service exposes administrative endpoints" --parent $PREMISE_ID | jq -r .id)
+# 3. Formulate a hypothesis (thought)
+./build/stingtrail log hypothesis "Web Service exposes administrative endpoints" --parent 1
 
-# 4. Plan step with rationale
-STEP_ID=$(./build/stingtrail plan "Fuzz directories using wordlist" --why "Find hidden admin panels" --priority 1 --parent $HYP_ID | jq -r .step_id)
+# 4. Plan step under hypothesis (--why is optional)
+./build/stingtrail plan "Fuzz directories using wordlist" --parent 3 --prio 1
 
 # 5. Begin execution
-./build/stingtrail step $STEP_ID in_progress "Running ffuf against http://10.10.10.25/..."
+./build/stingtrail step 4 in_progress "Running ffuf against http://10.10.10.25/..."
 
-# 6. Complete step with outcome
-./build/stingtrail step $STEP_ID done "Discovered /admin_dev endpoint returning HTTP 200"
+# 6. Complete step with concrete win/fail outcome (done or blocked)
+./build/stingtrail step 4 done "Discovered /admin_dev endpoint returning HTTP 200"
 
-# 7. Check mission board
+# 7. Check mission board (shows incomplete plan counts per node and globally)
 ./build/stingtrail status
 ```
 
@@ -190,8 +192,8 @@ Stingtrail includes a zero-dependency Model Context Protocol (MCP) server wrappe
 ### Exposed MCP Tools
 1. **`stingtrail_node`**: Record a conceptual DAG root node (`premise`, `asset`, `context`).
 2. **`stingtrail_log`**: Record epistemic reasoning (`observation`, `hypothesis`, `evidence`, `refutation`, `finding`).
-3. **`stingtrail_plan`**: Propose an operational step with mandatory `why` rationale and priority `1` (critical) to `5` (low). Fail-closed guards reject unjustified or destructive actions.
-4. **`stingtrail_step`**: Update step lifecycle state (`pending`, `in_progress`, `done`, `blocked`) and record concrete outcomes.
+3. **`stingtrail_plan`**: Propose an operational step linked to an existing `hypothesis` (`parent_id`), with optional `why` rationale and priority `1` (critical) to `5` (low). Fail-closed guards reject unplanned hypothesis-less or destructive actions.
+4. **`stingtrail_step`**: Update step lifecycle state (`pending`, `in_progress`, `done`, `blocked`) and record concrete outcomes (outcome required for `done` / `blocked`).
 5. **`stingtrail_status`**: Retrieve the mission board (ASCII text or JSON structure).
 6. **`stingtrail_export`**: Export the complete DAG state journal as JSON.
 7. **`stingtrail_guard`**: Validate arbitrary action commands and target hosts against destructive patterns and authorization scope.

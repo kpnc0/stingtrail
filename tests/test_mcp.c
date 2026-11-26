@@ -128,26 +128,32 @@ TEST(mcp_tool_log_and_plan) {
     ASSERT_EQ_INT(st.entry_count, 1);
     ASSERT_STR_EQ(st.entries[0].summary, "Open port 22 and 80");
 
-    /* Plan step with rationale */
-    const char *req_plan = "{\"jsonrpc\":\"2.0\",\"id\":21,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_plan\",\"arguments\":{\"action\":\"Enumerate HTTP paths\",\"why\":\"Identify admin endpoints\",\"priority\":1,\"parent_id\":2,\"target\":\"192.168.1.10\"}}}";
+    /* Plan step under observation (must fail: requires hypothesis) */
+    const char *req_bad_parent = "{\"jsonrpc\":\"2.0\",\"id\":21,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_plan\",\"arguments\":{\"action\":\"Reboot server\",\"parent_id\":2}}}";
+    len = sting_mcp_dispatch_message(&st, req_bad_parent, resp, sizeof(resp));
+    ASSERT_TRUE(len > 0);
+    ASSERT_TRUE(strstr(resp, "\"isError\":true") != NULL);
+    ASSERT_TRUE(strstr(resp, "hypothesis") != NULL);
+
+    /* Log hypothesis #3 under observation #2 */
+    const char *req_hyp = "{\"jsonrpc\":\"2.0\",\"id\":22,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_log\",\"arguments\":{\"kind\":\"hypothesis\",\"severity\":\"medium\",\"summary\":\"Admin panel exposed on port 80\",\"parent_id\":2}}}";
+    len = sting_mcp_dispatch_message(&st, req_hyp, resp, sizeof(resp));
+    ASSERT_TRUE(len > 0);
+    ASSERT_TRUE(strstr(resp, "\"isError\":false") != NULL);
+
+    /* Plan step under hypothesis WITHOUT why rationale (must succeed) */
+    const char *req_plan = "{\"jsonrpc\":\"2.0\",\"id\":23,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_plan\",\"arguments\":{\"action\":\"Enumerate HTTP paths\",\"priority\":1,\"parent_id\":3,\"target\":\"192.168.1.10\"}}}";
     len = sting_mcp_dispatch_message(&st, req_plan, resp, sizeof(resp));
     ASSERT_TRUE(len > 0);
     ASSERT_TRUE(strstr(resp, "\"isError\":false") != NULL);
-    ASSERT_TRUE(strstr(resp, "step #3 planned") != NULL);
+    ASSERT_TRUE(strstr(resp, "step #4 planned") != NULL);
     ASSERT_EQ_INT(st.step_count, 1);
     ASSERT_STR_EQ(st.steps[0].action, "Enumerate HTTP paths");
-    ASSERT_STR_EQ(st.steps[0].rationale, "Identify admin endpoints");
+    ASSERT_STR_EQ(st.steps[0].rationale, "");
     ASSERT_EQ_INT(st.steps[0].priority, 1);
 
-    /* Plan step without rationale (must fail) */
-    const char *req_no_why = "{\"jsonrpc\":\"2.0\",\"id\":22,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_plan\",\"arguments\":{\"action\":\"Reboot server\",\"parent_id\":2}}}";
-    len = sting_mcp_dispatch_message(&st, req_no_why, resp, sizeof(resp));
-    ASSERT_TRUE(len > 0);
-    ASSERT_TRUE(strstr(resp, "\"isError\":true") != NULL);
-    ASSERT_TRUE(strstr(resp, "rationale is required") != NULL);
-
     /* Plan step with destructive pattern (guard fail-closed) */
-    const char *req_destruct = "{\"jsonrpc\":\"2.0\",\"id\":23,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_plan\",\"arguments\":{\"action\":\"rm -rf /var/log\",\"why\":\"Clean logs\",\"parent_id\":2}}}";
+    const char *req_destruct = "{\"jsonrpc\":\"2.0\",\"id\":24,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_plan\",\"arguments\":{\"action\":\"rm -rf /var/log\",\"why\":\"Clean logs\",\"parent_id\":3}}}";
     len = sting_mcp_dispatch_message(&st, req_destruct, resp, sizeof(resp));
     ASSERT_TRUE(len > 0);
     ASSERT_TRUE(strstr(resp, "\"isError\":true") != NULL);
@@ -159,30 +165,31 @@ TEST(mcp_tool_step_lifecycle) {
     sting_state_init(&st, NULL);
 
     uint32_t nid = sting_state_add_node(&st, "premise", "Test Mission", "", false);
+    uint32_t hid = sting_state_add_entry(&st, nid, "hypothesis", "info", "Param injection", "", false);
     const char *err = NULL;
-    uint32_t sid = sting_state_plan_step(&st, nid, 2, NULL, "Fuzz parameters", "Find injection bugs", false, &err);
+    uint32_t sid = sting_state_plan_step(&st, hid, 2, NULL, "Fuzz parameters", "Find injection bugs", false, &err);
     ASSERT_TRUE(sid > 0);
 
     char resp[4096];
     /* Update to in_progress */
-    const char *req_step1 = "{\"jsonrpc\":\"2.0\",\"id\":30,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_step\",\"arguments\":{\"step_id\":2,\"status\":\"in_progress\",\"outcome\":\"Fuzzing started\"}}}";
+    const char *req_step1 = "{\"jsonrpc\":\"2.0\",\"id\":30,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_step\",\"arguments\":{\"step_id\":3,\"status\":\"in_progress\",\"outcome\":\"Fuzzing started\"}}}";
     int len = sting_mcp_dispatch_message(&st, req_step1, resp, sizeof(resp));
     ASSERT_TRUE(len > 0);
     ASSERT_TRUE(strstr(resp, "\"isError\":false") != NULL);
-    ASSERT_TRUE(strstr(resp, "step #2 updated to in_progress") != NULL);
+    ASSERT_TRUE(strstr(resp, "step #3 updated to in_progress") != NULL);
     ASSERT_STR_EQ(st.steps[0].status, "in_progress");
 
     /* Update to done */
-    const char *req_step2 = "{\"jsonrpc\":\"2.0\",\"id\":31,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_step\",\"arguments\":{\"step_id\":2,\"status\":\"done\",\"outcome\":\"SQL injection confirmed on id param\"}}}";
+    const char *req_step2 = "{\"jsonrpc\":\"2.0\",\"id\":31,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_step\",\"arguments\":{\"step_id\":3,\"status\":\"done\",\"outcome\":\"SQL injection confirmed on id param\"}}}";
     len = sting_mcp_dispatch_message(&st, req_step2, resp, sizeof(resp));
     ASSERT_TRUE(len > 0);
     ASSERT_TRUE(strstr(resp, "\"isError\":false") != NULL);
-    ASSERT_TRUE(strstr(resp, "step #2 updated to done") != NULL);
+    ASSERT_TRUE(strstr(resp, "step #3 updated to done") != NULL);
     ASSERT_STR_EQ(st.steps[0].status, "done");
     ASSERT_STR_EQ(st.steps[0].outcome, "SQL injection confirmed on id param");
 
     /* Invalid status fails */
-    const char *req_step3 = "{\"jsonrpc\":\"2.0\",\"id\":32,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_step\",\"arguments\":{\"step_id\":2,\"status\":\"bogus\"}}}";
+    const char *req_step3 = "{\"jsonrpc\":\"2.0\",\"id\":32,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_step\",\"arguments\":{\"step_id\":3,\"status\":\"bogus\"}}}";
     len = sting_mcp_dispatch_message(&st, req_step3, resp, sizeof(resp));
     ASSERT_TRUE(len > 0);
     ASSERT_TRUE(strstr(resp, "\"isError\":true") != NULL);
@@ -194,7 +201,8 @@ TEST(mcp_status_and_export) {
 
     uint32_t nid = sting_state_add_node(&st, "premise", "Board Test Premise", "Testing status display", false);
     sting_state_add_entry(&st, nid, "observation", "info", "Obs 1", "Detail 1", false);
-    sting_state_plan_step(&st, nid, 1, "test.host", "Execute plan", "Because testing", false, NULL);
+    uint32_t hid = sting_state_add_entry(&st, nid, "hypothesis", "info", "Hyp 1", "", false);
+    sting_state_plan_step(&st, hid, 1, "test.host", "Execute plan", "", false, NULL);
 
     char resp[65536];
     /* Text board status */
@@ -203,6 +211,7 @@ TEST(mcp_status_and_export) {
     ASSERT_TRUE(len > 0);
     ASSERT_TRUE(strstr(resp, "CRITICAL THINKING BOARD") != NULL);
     ASSERT_TRUE(strstr(resp, "Board Test Premise") != NULL);
+    ASSERT_TRUE(strstr(resp, "incomplete plans: 1/1") != NULL);
     ASSERT_TRUE(strstr(resp, "Execute plan") != NULL);
 
     /* JSON status */
@@ -306,7 +315,12 @@ TEST(mcp_persistence) {
     ASSERT_TRUE(len > 0);
     ASSERT_TRUE(strstr(resp, "\"isError\":false") != NULL);
 
-    const char *req_plan = "{\"jsonrpc\":\"2.0\",\"id\":81,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_plan\",\"arguments\":{\"action\":\"Persist step\",\"why\":\"Test file sync\",\"priority\":2,\"parent_id\":1}}}";
+    const char *req_hyp = "{\"jsonrpc\":\"2.0\",\"id\":81,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_log\",\"arguments\":{\"kind\":\"hypothesis\",\"summary\":\"Persistent Hyp\",\"parent_id\":1}}}";
+    len = sting_mcp_dispatch_message(&s1, req_hyp, resp, sizeof(resp));
+    ASSERT_TRUE(len > 0);
+    ASSERT_TRUE(strstr(resp, "\"isError\":false") != NULL);
+
+    const char *req_plan = "{\"jsonrpc\":\"2.0\",\"id\":82,\"method\":\"tools/call\",\"params\":{\"name\":\"stingtrail_plan\",\"arguments\":{\"action\":\"Persist step\",\"priority\":2,\"parent_id\":2}}}";
     len = sting_mcp_dispatch_message(&s1, req_plan, resp, sizeof(resp));
     ASSERT_TRUE(len > 0);
     ASSERT_TRUE(strstr(resp, "\"isError\":false") != NULL);

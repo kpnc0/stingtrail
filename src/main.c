@@ -19,10 +19,10 @@ static void print_usage(FILE *out, const char *prog) {
         "  %slog%s %s<kind> <summary> [--parent N] [--sev S] [--detail D]%s    Append reasoning log\n"
         "       %skinds:%s %sobservation%s, %shypothesis%s, %sevidence%s, %srefutation%s, %sfinding%s\n"
         "       %sseverities:%s %sinfo%s, %slow%s, %smedium%s, %shigh%s, %scritical%s\n"
-        "  %splan%s %s<action> --why <rationale> [--prio 1-5] [--parent N] [--target T]%s\n"
-        "       Propose a prioritized action step with mandatory rationale\n"
+        "  %splan%s %s<action> --parent <hyp_id> [--why <rationale>] [--prio 1-5] [--target T]%s\n"
+        "       Propose a prioritized action step under an existing hypothesis (--why optional)\n"
         "  %sstep%s %s<id> <status> [outcome]%s                                Update step state\n"
-        "       %sstatuses:%s %spending%s, %sin_progress%s, %sdone%s, %sblocked%s\n"
+        "       %sstatuses:%s %spending%s, %sin_progress%s, %sdone%s, %sblocked%s (outcome required for done/blocked)\n"
         "  %sstatus%s %s[--json] [--focus <id>]%s                              Display board or focused subtree\n"
         "  %sfocus%s %s<id> [--json]%s                                         Display focused context (hourglass traversal)\n"
         "  %sexport%s %s[--focus <id>]%s                                       Export full or focused state JSON\n"
@@ -214,13 +214,8 @@ int main(int argc, char **argv) {
             }
         }
 
-        if (!why || why[0] == '\0') {
-            fprintf(stderr, "error: rationale is required for disciplined planning (--why \"...\")\n");
-            return 1;
-        }
-
         const char *err = NULL;
-        uint32_t id = sting_state_plan_step(&st, parent_id, prio, target, action, why, true, &err);
+        uint32_t id = sting_state_plan_step(&st, parent_id, prio, target, action, why ? why : "", true, &err);
         if (id == 0) {
             fprintf(stderr, "error: %s\n", err ? err : "failed to plan step");
             return 1;
@@ -244,7 +239,7 @@ int main(int argc, char **argv) {
         const char *outcome = (arg_idx < argc) ? argv[arg_idx++] : "";
 
         if (!sting_state_update_step(&st, step_id, status, outcome, true)) {
-            fprintf(stderr, "error: invalid step id or status (valid: pending, in_progress, done, blocked)\n");
+            fprintf(stderr, "error: invalid step id, status (valid: pending, in_progress, done, blocked), or missing outcome (required for done/blocked)\n");
             return 1;
         }
         sting_color_t c = sting_color_get();

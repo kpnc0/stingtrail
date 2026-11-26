@@ -27,6 +27,92 @@ void sting_state_reload(sting_state_t *st) {
     sting_store_load(st);
 }
 
+static bool is_hypothesis_id(const sting_state_t *st, uint32_t id) {
+    if (!st || id == 0) return false;
+    for (size_t i = 0; i < st->entry_count; i++) {
+        if (st->entries[i].id == id && strcmp(st->entries[i].kind, "hypothesis") == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static size_t collect_descendants(const sting_state_t *st, uint32_t seed_id,
+                                  uint32_t *out_ids, size_t cap) {
+    if (!st || !out_ids || cap == 0) return 0;
+    size_t cnt = 0;
+    out_ids[cnt++] = seed_id;
+
+    for (int pass = 0; pass < 32; pass++) {
+        bool added = false;
+        for (size_t i = 0; i < st->entry_count; i++) {
+            uint32_t id = st->entries[i].id;
+            uint32_t pid = st->entries[i].parent_id;
+            bool has = false;
+            for (size_t k = 0; k < cnt; k++) { if (out_ids[k] == id) { has = true; break; } }
+            if (has) continue;
+            for (size_t k = 0; k < cnt; k++) {
+                if (out_ids[k] == pid) {
+                    if (cnt < cap) { out_ids[cnt++] = id; added = true; }
+                    break;
+                }
+            }
+        }
+        for (size_t i = 0; i < st->step_count; i++) {
+            uint32_t id = st->steps[i].id;
+            uint32_t pid = st->steps[i].parent_id;
+            bool has = false;
+            for (size_t k = 0; k < cnt; k++) { if (out_ids[k] == id) { has = true; break; } }
+            if (has) continue;
+            for (size_t k = 0; k < cnt; k++) {
+                if (out_ids[k] == pid) {
+                    if (cnt < cap) { out_ids[cnt++] = id; added = true; }
+                    break;
+                }
+            }
+        }
+        if (!added) break;
+    }
+    return cnt;
+}
+
+void sting_state_plan_counts(const sting_state_t *st, uint32_t root_id,
+                             size_t *total_out, size_t *incomplete_out) {
+    size_t total = 0;
+    size_t incomplete = 0;
+    if (!st) {
+        if (total_out) *total_out = 0;
+        if (incomplete_out) *incomplete_out = 0;
+        return;
+    }
+
+    if (root_id == 0) {
+        total = st->step_count;
+        for (size_t i = 0; i < st->step_count; i++) {
+            if (strcmp(st->steps[i].status, "done") != 0) incomplete++;
+        }
+    } else {
+        uint32_t reach[1024];
+        size_t cnt = collect_descendants(st, root_id, reach, 1024);
+        for (size_t i = 0; i < st->step_count; i++) {
+            bool in_sub = false;
+            for (size_t k = 0; k < cnt; k++) {
+                if (reach[k] == st->steps[i].id) {
+                    in_sub = true;
+                    break;
+                }
+            }
+            if (in_sub) {
+                total++;
+                if (strcmp(st->steps[i].status, "done") != 0) incomplete++;
+            }
+        }
+    }
+
+    if (total_out) *total_out = total;
+    if (incomplete_out) *incomplete_out = incomplete;
+}
+
 static bool id_exists(const sting_state_t *st, uint32_t id) {
     if (id == 0) return true;
     for (size_t i = 0; i < st->node_count; i++) {
@@ -160,16 +246,12 @@ uint32_t sting_state_plan_step(sting_state_t *st, uint32_t parent_id,
         if (err_out) *err_out = "action is required";
         return 0;
     }
-    if (!rationale || rationale[0] == '\0') {
-        if (err_out) *err_out = "rationale is required for disciplined planning";
-        return 0;
-    }
     if (st->step_count >= STINGTRAIL_MAX_STEPS) {
         if (err_out) *err_out = "step capacity reached";
         return 0;
     }
-    if (!id_exists(st, parent_id)) {
-        if (err_out) *err_out = "parent_id does not exist in graph";
+    if (!is_hypothesis_id(st, parent_id)) {
+        if (err_out) *err_out = "every plan must belong to an existing hypothesis (--parent <hypothesis_id>)";
         return 0;
     }
 
@@ -189,7 +271,7 @@ uint32_t sting_state_plan_step(sting_state_t *st, uint32_t parent_id,
     snprintf(s->status, sizeof(s->status), "%s", "pending");
     snprintf(s->target, sizeof(s->target), "%s", target ? target : "");
     snprintf(s->action, sizeof(s->action), "%s", action);
-    snprintf(s->rationale, sizeof(s->rationale), "%s", rationale);
+    snprintf(s->rationale, sizeof(s->rationale), "%s", rationale ? rationale : "");
     s->outcome[0] = '\0';
     s->created_at = (int64_t)time(NULL);
     s->updated_at = s->created_at;
@@ -233,6 +315,10 @@ bool sting_state_update_step(sting_state_t *st, uint32_t step_id,
         strcmp(status, "in_progress") != 0 &&
         strcmp(status, "done") != 0 &&
         strcmp(status, "blocked") != 0) {
+        return false;
+    }
+    if ((strcmp(status, "done") == 0 || strcmp(status, "blocked") == 0) &&
+        (!outcome || outcome[0] == '\0')) {
         return false;
     }
 
@@ -401,12 +487,15 @@ void sting_state_print_board(const sting_state_t *st) {
         printf("  (none)\n");
     } else {
         for (size_t i = 0; i < st->node_count; i++) {
-            printf("  %s[#%u]%s (%s) %s%s%s %s(created: %s)%s\n",
+            size_t n_total = 0, n_inc = 0;
+            sting_state_plan_counts(st, st->nodes[i].id, &n_total, &n_inc);
+            printf("  %s[#%u]%s (%s) %s%s%s [incomplete plans: %zu/%zu] %s(created: %s)%s\n",
                    c.anchor, st->nodes[i].id, c.reset,
                    st->nodes[i].kind,
                    st->nodes[i].name,
                    st->nodes[i].detail[0] ? " — " : "",
                    st->nodes[i].detail[0] ? st->nodes[i].detail : "",
+                   n_inc, n_total,
                    c.dim, st->nodes[i].created[0] ? st->nodes[i].created : "-", c.reset);
         }
     }
@@ -417,18 +506,34 @@ void sting_state_print_board(const sting_state_t *st) {
     } else {
         for (size_t i = 0; i < st->entry_count; i++) {
             const char *k_col = sting_color_kind(&c, st->entries[i].kind);
-            printf("  %s[#%u <- #%u]%s [%s%s%s/%s] %s%s%s %s(created: %s)%s\n",
-                   c.anchor, st->entries[i].id, st->entries[i].parent_id, c.reset,
-                   k_col, st->entries[i].kind, c.reset,
-                   st->entries[i].severity,
-                   st->entries[i].summary,
-                   st->entries[i].detail[0] ? " | " : "",
-                   st->entries[i].detail[0] ? st->entries[i].detail : "",
-                   c.dim, st->entries[i].created[0] ? st->entries[i].created : "-", c.reset);
+            if (strcmp(st->entries[i].kind, "hypothesis") == 0) {
+                size_t h_total = 0, h_inc = 0;
+                sting_state_plan_counts(st, st->entries[i].id, &h_total, &h_inc);
+                printf("  %s[#%u <- #%u]%s [%s%s%s/%s] %s%s%s [incomplete plans: %zu/%zu] %s(created: %s)%s\n",
+                       c.anchor, st->entries[i].id, st->entries[i].parent_id, c.reset,
+                       k_col, st->entries[i].kind, c.reset,
+                       st->entries[i].severity,
+                       st->entries[i].summary,
+                       st->entries[i].detail[0] ? " | " : "",
+                       st->entries[i].detail[0] ? st->entries[i].detail : "",
+                       h_inc, h_total,
+                       c.dim, st->entries[i].created[0] ? st->entries[i].created : "-", c.reset);
+            } else {
+                printf("  %s[#%u <- #%u]%s [%s%s%s/%s] %s%s%s %s(created: %s)%s\n",
+                       c.anchor, st->entries[i].id, st->entries[i].parent_id, c.reset,
+                       k_col, st->entries[i].kind, c.reset,
+                       st->entries[i].severity,
+                       st->entries[i].summary,
+                       st->entries[i].detail[0] ? " | " : "",
+                       st->entries[i].detail[0] ? st->entries[i].detail : "",
+                       c.dim, st->entries[i].created[0] ? st->entries[i].created : "-", c.reset);
+            }
         }
     }
 
-    printf("\n%sPlanned Next Steps (%zu):%s\n", c.bold, st->step_count, c.reset);
+    size_t all_total = 0, all_inc = 0;
+    sting_state_plan_counts(st, 0, &all_total, &all_inc);
+    printf("\n%sPlanned Next Steps (%zu, %zu incomplete):%s\n", c.bold, all_total, all_inc, c.reset);
     if (st->step_count == 0) {
         printf("  (none)\n");
     } else {
@@ -451,7 +556,9 @@ void sting_state_print_board(const sting_state_t *st) {
                        st->steps[i].created[0] ? st->steps[i].created : "-",
                        st->steps[i].modified[0] ? st->steps[i].modified : "-",
                        c.reset);
-                printf("      %swhy:%s %s\n", c.dim, c.reset, st->steps[i].rationale);
+                if (st->steps[i].rationale[0]) {
+                    printf("      %swhy:%s %s\n", c.dim, c.reset, st->steps[i].rationale);
+                }
                 if (st->steps[i].outcome[0]) {
                     printf("      %soutcome:%s %s\n", c.dim, c.reset, st->steps[i].outcome);
                 }
@@ -465,7 +572,14 @@ bool sting_state_to_json(const sting_state_t *st, char *out_buf, size_t out_cap)
     sting_buf_t b;
     sting_buf_init(&b, out_buf, out_cap);
 
-    sting_buf_append(&b, "{\"version\":\"" STINGTRAIL_VERSION "\",\"nodes\":[");
+    size_t total_plans = 0, incomplete_plans = 0;
+    sting_state_plan_counts(st, 0, &total_plans, &incomplete_plans);
+
+    sting_buf_append(&b, "{\"version\":\"" STINGTRAIL_VERSION "\",\"total_plans\":");
+    sting_buf_append_int(&b, (long long)total_plans);
+    sting_buf_append(&b, ",\"incomplete_plans\":");
+    sting_buf_append_int(&b, (long long)incomplete_plans);
+    sting_buf_append(&b, ",\"nodes\":[");
     for (size_t i = 0; i < st->node_count; i++) {
         if (i > 0) sting_buf_append_ch(&b, ',');
         sting_buf_append(&b, "{\"id\":");
@@ -694,17 +808,21 @@ void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
     }
 
     /* 3. Target Node Details */
+    size_t f_total = 0, f_inc = 0;
+    sting_state_plan_counts(st, target_id, &f_total, &f_inc);
     printf("\n%sTarget Node (%s#%u%s):%s\n", c.bold, c.anchor, target_id, c.bold, c.reset);
     if (target_node) {
         printf("  %sKind:%s %s\n", c.dim, c.reset, target_node->kind);
         printf("  %sName:%s %s\n", c.dim, c.reset, target_node->name);
         if (target_node->detail[0]) printf("  %sDetail:%s %s\n", c.dim, c.reset, target_node->detail);
+        printf("  %sIncomplete Plans:%s %zu / %zu\n", c.dim, c.reset, f_inc, f_total);
         printf("  %sCreated:%s %s\n", c.dim, c.reset, target_node->created);
     } else if (target_entry) {
         const char *k_col = sting_color_kind(&c, target_entry->kind);
         printf("  %sKind:%s %s%s%s (sev: %s)\n", c.dim, c.reset, k_col, target_entry->kind, c.reset, target_entry->severity);
         printf("  %sSummary:%s %s\n", c.dim, c.reset, target_entry->summary);
         if (target_entry->detail[0]) printf("  %sDetail:%s %s\n", c.dim, c.reset, target_entry->detail);
+        printf("  %sIncomplete Plans:%s %zu / %zu\n", c.dim, c.reset, f_inc, f_total);
         printf("  %sCreated:%s %s\n", c.dim, c.reset, target_entry->created);
     } else if (target_step) {
         const char *p_col = sting_color_priority(&c, target_step->priority);
@@ -713,8 +831,9 @@ void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
                c.dim, c.reset, p_col, target_step->priority, c.reset,
                c.dim, c.reset, s_col, target_step->status, c.reset);
         printf("  %sAction:%s %s\n", c.dim, c.reset, target_step->action);
-        printf("  %sRationale:%s %s\n", c.dim, c.reset, target_step->rationale);
+        if (target_step->rationale[0]) printf("  %sRationale:%s %s\n", c.dim, c.reset, target_step->rationale);
         if (target_step->outcome[0]) printf("  %sOutcome:%s %s\n", c.dim, c.reset, target_step->outcome);
+        printf("  %sIncomplete Plans:%s %zu / %zu\n", c.dim, c.reset, f_inc, f_total);
         printf("  %sCreated:%s %s | %sModified:%s %s\n",
                c.dim, c.reset, target_step->created,
                c.dim, c.reset, target_step->modified);
@@ -722,39 +841,8 @@ void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
 
     /* 4. Descendants Subtree (Topological DFS) */
     printf("\n%sEpistemic Subtree / Outcomes:%s\n", c.bold, c.reset);
-    uint32_t reach[512];
-    size_t reach_cnt = 0;
-    reach[reach_cnt++] = target_id;
-    for (int pass = 0; pass < 32; pass++) {
-        bool added = false;
-        for (size_t i = 0; i < st->entry_count; i++) {
-            uint32_t id = st->entries[i].id;
-            uint32_t pid = st->entries[i].parent_id;
-            bool has = false;
-            for (size_t k = 0; k < reach_cnt; k++) { if (reach[k] == id) { has = true; break; } }
-            if (has) continue;
-            for (size_t k = 0; k < reach_cnt; k++) {
-                if (reach[k] == pid) {
-                    if (reach_cnt < 512) { reach[reach_cnt++] = id; added = true; }
-                    break;
-                }
-            }
-        }
-        for (size_t i = 0; i < st->step_count; i++) {
-            uint32_t id = st->steps[i].id;
-            uint32_t pid = st->steps[i].parent_id;
-            bool has = false;
-            for (size_t k = 0; k < reach_cnt; k++) { if (reach[k] == id) { has = true; break; } }
-            if (has) continue;
-            for (size_t k = 0; k < reach_cnt; k++) {
-                if (reach[k] == pid) {
-                    if (reach_cnt < 512) { reach[reach_cnt++] = id; added = true; }
-                    break;
-                }
-            }
-        }
-        if (!added) break;
-    }
+    uint32_t reach[1024];
+    size_t reach_cnt = collect_descendants(st, target_id, reach, 1024);
 
     if (reach_cnt <= 1) {
         printf("  %s(No descendant actions or evidence recorded yet)%s\n", c.dim, c.reset);
@@ -783,7 +871,9 @@ void sting_state_print_focused(const sting_state_t *st, uint32_t target_id) {
                            p_col, st->steps[i].priority, c.reset,
                            s_col, st->steps[i].status, c.reset,
                            st->steps[i].action);
-                    printf("      %swhy:%s %s\n", c.dim, c.reset, st->steps[i].rationale);
+                    if (st->steps[i].rationale[0]) {
+                        printf("      %swhy:%s %s\n", c.dim, c.reset, st->steps[i].rationale);
+                    }
                     if (st->steps[i].outcome[0]) {
                         printf("      %soutcome:%s %s\n", c.dim, c.reset, st->steps[i].outcome);
                     }
@@ -800,8 +890,15 @@ bool sting_state_focused_to_json(const sting_state_t *st, uint32_t target_id, ch
     sting_buf_t b;
     sting_buf_init(&b, out_buf, out_cap);
 
+    size_t f_total = 0, f_inc = 0;
+    sting_state_plan_counts(st, target_id, &f_total, &f_inc);
+
     sting_buf_append(&b, "{\"version\":\"" STINGTRAIL_VERSION "\",\"traversal\":\"hourglass_v1\",\"target_id\":");
     sting_buf_append_int(&b, (long long)target_id);
+    sting_buf_append(&b, ",\"total_plans\":");
+    sting_buf_append_int(&b, (long long)f_total);
+    sting_buf_append(&b, ",\"incomplete_plans\":");
+    sting_buf_append_int(&b, (long long)f_inc);
 
     /* Ancestors */
     uint32_t target_pid = 0;

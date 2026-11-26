@@ -45,13 +45,14 @@ TEST(headless_dag_build_and_semantic_glow) {
     sting_state_init(&st, NULL);
 
     uint32_t root = sting_state_add_node(&st, "premise", "Target Infrastructure", "Scope Alpha", false);
-    uint32_t s1 = sting_state_plan_step(&st, root, 1, "10.0.0.1", "Port scan", "Find services", false, NULL);
+    uint32_t hyp = sting_state_add_entry(&st, root, "hypothesis", "info", "Exposed services", "", false);
+    uint32_t s1 = sting_state_plan_step(&st, hyp, 1, "10.0.0.1", "Port scan", "Find services", false, NULL);
     sting_state_update_step(&st, s1, "done", "Ports open", false);
 
-    uint32_t s2 = sting_state_plan_step(&st, root, 2, "10.0.0.2", "Service banner grab", "Identify version", false, NULL);
+    uint32_t s2 = sting_state_plan_step(&st, hyp, 2, "10.0.0.2", "Service banner grab", "Identify version", false, NULL);
     sting_state_update_step(&st, s2, "pending", "", false);
 
-    uint32_t s3 = sting_state_plan_step(&st, root, 3, "10.0.0.3", "Exploit attempt", "Fire payload", false, NULL);
+    uint32_t s3 = sting_state_plan_step(&st, hyp, 3, "10.0.0.3", "Exploit attempt", "Fire payload", false, NULL);
     sting_state_update_step(&st, s3, "blocked", "Firewall dropped connection", false);
 
     Rid graph = Rnode_graph_create();
@@ -60,7 +61,7 @@ TEST(headless_dag_build_and_semantic_glow) {
 
     sting_gui_context_t *ctx = sting_gui_get_context();
     ASSERT_TRUE(ctx != NULL);
-    ASSERT_EQ_INT(ctx->total_items, 4);
+    ASSERT_EQ_INT(ctx->total_items, 5);
 
     /* Verify semantic glows */
     for (size_t i = 0; i < ctx->total_items; i++) {
@@ -112,15 +113,16 @@ TEST(vim_hjkl_keybindings) {
     sting_state_init(&st, NULL);
 
     /* Graph:
-     *   Root (#1)
-     *     ├── Child1 (#2)
-     *     ├── Child2 (#3)
-     *     └── Child3 (#4)
+     *   Root (#1) -> Hyp (#2)
+     *                  ├── Child1 (#3)
+     *                  ├── Child2 (#4)
+     *                  └── Child3 (#5)
      */
     uint32_t root = sting_state_add_node(&st, "premise", "Engagement Root", "Mission", false);
-    uint32_t c1 = sting_state_plan_step(&st, root, 1, "10.0.0.1", "Recon Service 1", "Why 1", false, NULL);
-    uint32_t c2 = sting_state_plan_step(&st, root, 2, "10.0.0.2", "Recon Service 2", "Why 2", false, NULL);
-    uint32_t c3 = sting_state_plan_step(&st, root, 3, "10.0.0.3", "Recon Service 3", "Why 3", false, NULL);
+    uint32_t hyp = sting_state_add_entry(&st, root, "hypothesis", "info", "Service hypothesis", "", false);
+    uint32_t c1 = sting_state_plan_step(&st, hyp, 1, "10.0.0.1", "Recon Service 1", "Why 1", false, NULL);
+    uint32_t c2 = sting_state_plan_step(&st, hyp, 2, "10.0.0.2", "Recon Service 2", "Why 2", false, NULL);
+    uint32_t c3 = sting_state_plan_step(&st, hyp, 3, "10.0.0.3", "Recon Service 3", "Why 3", false, NULL);
 
     Rid graph = Rnode_graph_create();
     sting_gui_build_dag(graph, &st);
@@ -128,28 +130,28 @@ TEST(vim_hjkl_keybindings) {
     sting_gui_context_t *ctx = sting_gui_get_context();
     ASSERT_TRUE(ctx != NULL);
 
-    int r_root = 0, r_c1 = 0, r_c2 = 0, r_c3 = 0;
+    int r_hyp = 0, r_c1 = 0, r_c2 = 0, r_c3 = 0;
     for (size_t i = 0; i < ctx->total_items; i++) {
-        if (ctx->items[i].id == root) r_root = ctx->items[i].rnode;
+        if (ctx->items[i].id == hyp) r_hyp = ctx->items[i].rnode;
         else if (ctx->items[i].id == c1) r_c1 = ctx->items[i].rnode;
         else if (ctx->items[i].id == c2) r_c2 = ctx->items[i].rnode;
         else if (ctx->items[i].id == c3) r_c3 = ctx->items[i].rnode;
     }
 
-    ASSERT_TRUE(r_root != 0 && r_c1 != 0 && r_c2 != 0 && r_c3 != 0);
+    ASSERT_TRUE(r_hyp != 0 && r_c1 != 0 && r_c2 != 0 && r_c3 != 0);
 
-    /* 1. Test 'l' (first child): Select root -> press 'l' -> jumps to child1 */
-    sting_gui_select_node(graph, r_root);
-    ASSERT_EQ_INT(ctx->selected_rnode, r_root);
+    /* 1. Test 'l' (first child): Select hyp -> press 'l' -> jumps to child1 */
+    sting_gui_select_node(graph, r_hyp);
+    ASSERT_EQ_INT(ctx->selected_rnode, r_hyp);
 
     bool handled = sting_gui_handle_key(graph, (RKey)'l', 0);
     ASSERT_TRUE(handled);
     ASSERT_EQ_INT(ctx->selected_rnode, r_c1);
 
-    /* 2. Test 'h' (parent): Select child1 -> press 'h' -> jumps back to root */
+    /* 2. Test 'h' (parent): Select child1 -> press 'h' -> jumps back to hyp */
     handled = sting_gui_handle_key(graph, (RKey)'h', 0);
     ASSERT_TRUE(handled);
-    ASSERT_EQ_INT(ctx->selected_rnode, r_root);
+    ASSERT_EQ_INT(ctx->selected_rnode, r_hyp);
 
     /* 3. Test 'j' (forward sibling): Select c1 -> press 'j' -> jumps to c2 */
     sting_gui_select_node(graph, r_c1);
@@ -229,7 +231,8 @@ TEST(gui_focus_and_see_all) {
     sting_state_init(&st, NULL);
 
     uint32_t root = sting_state_add_node(&st, "premise", "Focus Test Root", "Scope Alpha", false);
-    uint32_t s1 = sting_state_plan_step(&st, root, 1, "10.0.0.1", "Port scan", "Find services", false, NULL);
+    uint32_t hyp = sting_state_add_entry(&st, root, "hypothesis", "info", "Open services", "", false);
+    uint32_t s1 = sting_state_plan_step(&st, hyp, 1, "10.0.0.1", "Port scan", "Find services", false, NULL);
     uint32_t c1 = sting_state_add_entry(&st, s1, "observation", "info", "Open ports", "22, 80", false);
     uint32_t other = sting_state_add_node(&st, "premise", "Unrelated Branch", "Scope Beta", false);
     (void)c1; (void)other;
@@ -239,7 +242,7 @@ TEST(gui_focus_and_see_all) {
 
     sting_gui_context_t *ctx = sting_gui_get_context();
     ASSERT_TRUE(ctx != NULL);
-    ASSERT_EQ_INT(ctx->total_items, 4);
+    ASSERT_EQ_INT(ctx->total_items, 5);
 
     /* Focus on step s1 */
     sting_gui_focus_node(graph, &st, s1);
@@ -264,7 +267,7 @@ TEST(gui_focus_and_see_all) {
     ctx = sting_gui_get_context();
     ASSERT_TRUE(ctx != NULL);
     ASSERT_EQ_INT(sting_gui_get_focus_id(), 0);
-    ASSERT_EQ_INT(ctx->total_items, 4);
+    ASSERT_EQ_INT(ctx->total_items, 5);
 
     /* Verify menu item getters */
     ASSERT_TRUE(sting_gui_get_see_only_this_menu_item() != R_INVALID_ID);
@@ -282,11 +285,12 @@ TEST(render_distance_culling_over_200_nodes) {
     sting_state_init(&st, NULL);
 
     uint32_t root = sting_state_add_node(&st, "premise", "Large Graph Root", "Stress test >200 nodes", false);
+    uint32_t hyp = sting_state_add_entry(&st, root, "hypothesis", "info", "Large Graph Hypothesis", "", false);
     uint32_t last_step = 0;
     for (int i = 0; i < 240; i++) {
         char action[64];
         snprintf(action, sizeof(action), "Step %d", i);
-        uint32_t sid = sting_state_plan_step(&st, root, (i % 5) + 1, "10.0.0.1", action, "Benchmark culling", false, NULL);
+        uint32_t sid = sting_state_plan_step(&st, hyp, (i % 5) + 1, "10.0.0.1", action, "Benchmark culling", false, NULL);
         ASSERT_TRUE(sid != 0);
         last_step = sid;
     }
@@ -303,7 +307,7 @@ TEST(render_distance_culling_over_200_nodes) {
 
     sting_gui_context_t *ctx = sting_gui_get_context();
     ASSERT_TRUE(ctx != NULL);
-    ASSERT_EQ_INT((int)ctx->total_items, 301);
+    ASSERT_EQ_INT((int)ctx->total_items, 302);
 
     /* Nodes outside render distance must NOT be materialized in Raven */
     int rendered = Rnode_graph_get_node_count(graph);
@@ -335,10 +339,10 @@ TEST(render_distance_culling_over_200_nodes) {
     ASSERT_EQ_INT(ctx->items[0].rnode, 0); /* Root at top is now outside render distance */
     ASSERT_TRUE(Rnode_graph_get_link_count(graph) > 0);
 
-    /* Disabling render distance (<= 0) materializes all 301 nodes */
+    /* Disabling render distance (<= 0) materializes all 302 nodes */
     sting_gui_set_render_distance(0.0f);
     sting_gui_update_render_distance(graph);
-    ASSERT_EQ_INT(Rnode_graph_get_node_count(graph), 301);
+    ASSERT_EQ_INT(Rnode_graph_get_node_count(graph), 302);
 
     /* Re-enabling render distance culls again */
     sting_gui_set_render_distance(900.0f);
@@ -359,11 +363,12 @@ TEST(render_distance_navigation_and_highlight) {
     sting_state_init(&st, NULL);
 
     uint32_t root = sting_state_add_node(&st, "premise", "Nav Root", "Root", false);
+    uint32_t hyp = sting_state_add_entry(&st, root, "hypothesis", "info", "Nav Hyp", "", false);
     uint32_t prev_step = 0;
     for (int i = 0; i < 40; i++) {
         char action[64];
         snprintf(action, sizeof(action), "Sibling %d", i);
-        prev_step = sting_state_plan_step(&st, root, 2, "10.0.0.1", action, "Why", false, NULL);
+        prev_step = sting_state_plan_step(&st, hyp, 2, "10.0.0.1", action, "Why", false, NULL);
     }
     uint32_t child = sting_state_add_entry(&st, prev_step, "evidence", "info", "Far Child", "Deep node", false);
 
@@ -372,23 +377,23 @@ TEST(render_distance_navigation_and_highlight) {
 
     sting_gui_context_t *ctx = sting_gui_get_context();
     ASSERT_TRUE(ctx != NULL);
-    ASSERT_EQ_INT((int)ctx->total_items, 42);
+    ASSERT_EQ_INT((int)ctx->total_items, 43);
 
-    /* Root is near origin, child under 40th sibling is far outside 600px render distance */
-    int root_idx = -1, prev_idx = -1, child_idx = -1;
+    /* Hyp is near origin, child under 40th sibling is far outside 600px render distance */
+    int hyp_idx = -1, prev_idx = -1, child_idx = -1;
     for (size_t i = 0; i < ctx->total_items; i++) {
-        if (ctx->items[i].id == root) root_idx = (int)i;
+        if (ctx->items[i].id == hyp) hyp_idx = (int)i;
         else if (ctx->items[i].id == prev_step) prev_idx = (int)i;
         else if (ctx->items[i].id == child) child_idx = (int)i;
     }
-    ASSERT_TRUE(root_idx >= 0 && prev_idx >= 0 && child_idx >= 0);
-    ASSERT_TRUE(ctx->items[root_idx].rnode != 0);
+    ASSERT_TRUE(hyp_idx >= 0 && prev_idx >= 0 && child_idx >= 0);
+    ASSERT_TRUE(ctx->items[hyp_idx].rnode != 0);
     ASSERT_EQ_INT(ctx->items[child_idx].rnode, 0);
 
-    /* Selecting root highlights full logical chain including culled child */
-    sting_gui_select_node(graph, ctx->items[root_idx].rnode);
+    /* Selecting hyp highlights full logical chain including culled grandchild */
+    sting_gui_select_node(graph, ctx->items[hyp_idx].rnode);
     ASSERT_EQ_INT(ctx->items[child_idx].highlighted, 1);
-    ASSERT_EQ_INT((int)ctx->selected_id, (int)root);
+    ASSERT_EQ_INT((int)ctx->selected_id, (int)hyp);
 
     /* Pressing 'k' from first sibling wraps around to last sibling (far off-screen) */
     ASSERT_TRUE(sting_gui_handle_key(graph, (RKey)'l', 0));
@@ -419,11 +424,12 @@ TEST(find_node_by_id_keymap) {
     sting_state_init(&st, NULL);
 
     uint32_t root = sting_state_add_node(&st, "premise", "Find Root", "Root", false);
+    uint32_t hyp = sting_state_add_entry(&st, root, "hypothesis", "info", "Find Hyp", "", false);
     uint32_t target_id = 0;
     for (int i = 0; i < 30; i++) {
         char action[64];
         snprintf(action, sizeof(action), "Node %d", i);
-        uint32_t sid = sting_state_plan_step(&st, root, 2, "10.0.0.1", action, "Why", false, NULL);
+        uint32_t sid = sting_state_plan_step(&st, hyp, 2, "10.0.0.1", action, "Why", false, NULL);
         if (i == 25) target_id = sid;
     }
 
@@ -497,7 +503,7 @@ TEST(render_distance_focused_immediate_neighbors) {
     uint32_t gp = sting_state_add_node(&st, "premise", "Grandparent Root", "Level 0", false);
     uint32_t parent = sting_state_add_entry(&st, gp, "hypothesis", "info", "Parent", "Level 1", false);
     uint32_t focused = sting_state_plan_step(&st, parent, 2, "10.0.0.1", "Focused Step", "Level 2", false, NULL);
-    uint32_t child = sting_state_add_entry(&st, focused, "observation", "info", "Immediate Child", "Level 3", false);
+    uint32_t child = sting_state_add_entry(&st, focused, "hypothesis", "info", "Immediate Child", "Level 3", false);
     uint32_t gc = sting_state_plan_step(&st, child, 2, "10.0.0.2", "Grandchild Step", "Level 4", false, NULL);
 
     Rid graph = Rnode_graph_create();
