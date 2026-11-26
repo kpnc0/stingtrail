@@ -408,6 +408,81 @@ TEST(render_distance_navigation_and_highlight) {
     Rshutdown();
 }
 
+TEST(find_node_by_id_keymap) {
+    init_headless_raven();
+    sting_gui_set_render_distance(600.0f);
+
+    sting_state_t st;
+    sting_state_init(&st, NULL);
+
+    uint32_t root = sting_state_add_node(&st, "premise", "Find Root", "Root", false);
+    uint32_t target_id = 0;
+    for (int i = 0; i < 30; i++) {
+        char action[64];
+        snprintf(action, sizeof(action), "Node %d", i);
+        uint32_t sid = sting_state_plan_step(&st, root, 2, "10.0.0.1", action, "Why", false, NULL);
+        if (i == 25) target_id = sid;
+    }
+
+    Rid graph = Rnode_graph_create();
+    sting_gui_build_dag(graph, &st);
+    Rid overlay = sting_gui_create_find_overlay(graph);
+    ASSERT_TRUE(overlay != R_INVALID_ID);
+    Rid label = sting_gui_get_find_label();
+    ASSERT_TRUE(label != R_INVALID_ID);
+
+    /* Inactive by default: label is collapsed and screen is normal */
+    ASSERT_FALSE(sting_gui_is_find_active());
+    ASSERT_EQ_INT(Rwidget_get_visibility(label), R_COLLAPSED);
+
+    /* Pressing 'f' works even with no node selected */
+    ASSERT_TRUE(sting_gui_handle_key(graph, (RKey)'f', 0));
+    ASSERT_TRUE(sting_gui_is_find_active());
+    ASSERT_EQ_INT(Rwidget_get_visibility(label), R_VISIBLE);
+    ASSERT_TRUE(strcmp(Rlabel_get_text(label), "f: ") == 0);
+
+    /* Type target_id digits and test Backspace */
+    char digits[16];
+    snprintf(digits, sizeof(digits), "%u", target_id);
+    for (size_t i = 0; digits[i] != '\0'; i++) {
+        ASSERT_TRUE(sting_gui_handle_key(graph, (RKey)digits[i], 0));
+    }
+    ASSERT_TRUE(strcmp(sting_gui_get_find_input(), digits) == 0);
+
+    /* Append extra digit then backspace it */
+    ASSERT_TRUE(sting_gui_handle_key(graph, R_KEY_9, 0));
+    ASSERT_TRUE(sting_gui_handle_key(graph, R_KEY_BACKSPACE, 0));
+    ASSERT_TRUE(strcmp(sting_gui_get_find_input(), digits) == 0);
+
+    char expected_lbl[32];
+    snprintf(expected_lbl, sizeof(expected_lbl), "f: %s", digits);
+    ASSERT_TRUE(strcmp(Rlabel_get_text(label), expected_lbl) == 0);
+
+    /* Press Enter -> jumps to target_id (even if culled) and hides label */
+    ASSERT_TRUE(sting_gui_handle_key(graph, R_KEY_ENTER, 0));
+    sting_gui_finish_animation(graph);
+    ASSERT_FALSE(sting_gui_is_find_active());
+    ASSERT_EQ_INT(Rwidget_get_visibility(label), R_COLLAPSED);
+
+    sting_gui_context_t *ctx = sting_gui_get_context();
+    ASSERT_TRUE(ctx != NULL);
+    ASSERT_EQ_INT((int)ctx->selected_id, (int)target_id);
+    ASSERT_TRUE(ctx->selected_rnode != 0);
+
+    /* Escape cancels find mode without changing selection */
+    ASSERT_TRUE(sting_gui_handle_key(graph, R_KEY_F, 0));
+    ASSERT_TRUE(sting_gui_handle_key(graph, R_KEY_1, 0));
+    ASSERT_TRUE(sting_gui_is_find_active());
+    ASSERT_TRUE(sting_gui_handle_key(graph, R_KEY_ESCAPE, 0));
+    ASSERT_FALSE(sting_gui_is_find_active());
+    ASSERT_EQ_INT(Rwidget_get_visibility(label), R_COLLAPSED);
+    ASSERT_EQ_INT((int)ctx->selected_id, (int)target_id);
+
+    sting_gui_set_render_distance(STING_GUI_DEFAULT_RENDER_DISTANCE);
+    sting_gui_cleanup_context();
+    Rshutdown();
+}
+
 int main(void) {
     printf("=== Stingtrail-GUI Unit & Integration Test Suite ===\n");
     RUN_TEST(headless_dag_build_and_semantic_glow);
@@ -417,6 +492,7 @@ int main(void) {
     RUN_TEST(gui_focus_and_see_all);
     RUN_TEST(render_distance_culling_over_200_nodes);
     RUN_TEST(render_distance_navigation_and_highlight);
+    RUN_TEST(find_node_by_id_keymap);
 
     printf("=== Result: %d/%d tests passed ===\n", g_tests_passed, g_tests_run);
     return (g_tests_passed == g_tests_run) ? 0 : 1;

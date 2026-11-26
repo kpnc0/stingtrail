@@ -22,7 +22,8 @@ static void print_usage(FILE *out, const char *prog) {
         "  %sh%s                   Go to immediate parent node\n"
         "  %sj%s                   Go to next sibling node (forward)\n"
         "  %sk%s                   Go to previous sibling node (reverse)\n"
-        "  %sl%s                   Go to first child node\n",
+        "  %sl%s                   Go to first child node\n"
+        "  %sf <id> + Enter%s      Jump to node by numeric ID (Esc cancels)\n",
         c.bold, STINGTRAIL_VERSION, c.reset, c.dim, c.reset,
         c.bold, c.reset,
         c.anchor, prog, c.reset, c.dim, c.reset,
@@ -32,6 +33,7 @@ static void print_usage(FILE *out, const char *prog) {
         c.anchor, c.reset,
         c.anchor, c.reset,
         c.bold, c.reset,
+        c.anchor, c.reset,
         c.anchor, c.reset,
         c.anchor, c.reset,
         c.anchor, c.reset,

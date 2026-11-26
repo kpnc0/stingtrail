@@ -23,6 +23,10 @@ static int g_context_rnode = 0;
 static uint32_t g_focus_id = 0;
 static Rid g_menu_item_see_only_this = R_INVALID_ID;
 static Rid g_menu_item_see_all = R_INVALID_ID;
+static bool g_find_active = false;
+static char g_find_buf[16] = {0};
+static size_t g_find_len = 0;
+static Rid g_find_label = R_INVALID_ID;
 
 /* Camera smooth animation state */
 typedef struct {
@@ -306,15 +310,136 @@ void sting_gui_go_to_sibling(Rid graph, int rnode, bool reverse) {
     }
 }
 
+static void update_find_label(void) {
+    if (g_find_label == R_INVALID_ID) return;
+    if (!g_find_active) {
+        Rlabel_set_text(g_find_label, "");
+        Rwidget_set_visibility(g_find_label, R_COLLAPSED);
+        return;
+    }
+    char msg[32];
+    snprintf(msg, sizeof(msg), "f: %s", g_find_buf);
+    Rlabel_set_text(g_find_label, msg);
+    Rwidget_set_visibility(g_find_label, R_VISIBLE);
+}
+
+bool sting_gui_is_find_active(void) {
+    return g_find_active;
+}
+
+const char *sting_gui_get_find_input(void) {
+    return g_find_buf;
+}
+
+Rid sting_gui_get_find_label(void) {
+    return g_find_label;
+}
+
+Rid sting_gui_create_find_overlay(Rid graph) {
+    Rid overlay = Rwidget_create(R_WIDGET_OVERLAY);
+    if (graph != R_INVALID_ID) {
+        Rwidget_add_child(overlay, graph);
+        Rslot_set_halign(graph, R_HALIGN_FILL);
+        Rslot_set_valign(graph, R_VALIGN_FILL);
+    }
+
+    g_find_label = Rlabel_create("");
+    Rlabel_set_text_size(g_find_label, 11.0f);
+    Rlabel_set_color(g_find_label, 1.0f, 0.85f, 0.0f, 1.0f);
+    Rwidget_set_hit_testable(g_find_label, R_FALSE);
+    Rwidget_set_visibility(g_find_label, R_COLLAPSED);
+    Rwidget_add_child(overlay, g_find_label);
+    Rslot_set_halign(g_find_label, R_HALIGN_LEFT);
+    Rslot_set_valign(g_find_label, R_VALIGN_BOTTOM);
+    Rslot_set_padding(g_find_label, 10.0f, 0.0f, 0.0f, 8.0f);
+    update_find_label();
+    return overlay;
+}
+
 /* Vim navigation keybindings:
  *   h -> immediate parent (was p)
  *   j -> next sibling (was n)
  *   k -> previous sibling (was N / reverse)
  *   l -> first child (was c)
+ *   f -> go-to node by numeric ID
  */
 bool sting_gui_handle_key(Rid graph, RKey key, Ruint modifiers) {
     if (graph == R_INVALID_ID) graph = g_current_graph;
     if (!g_gui_ctx) return false;
+
+    /* Ignore when Ctrl, Alt, or Super modifiers are held */
+    if (modifiers & (R_MOD_CTRL | R_MOD_ALT | R_MOD_SUPER)) {
+        return false;
+    }
+
+    /* Normalize lowercase ASCII keycodes if passed */
+    if (key == (RKey)'f') key = R_KEY_F;
+    else if (key == (RKey)'h') key = R_KEY_H;
+    else if (key == (RKey)'j') key = R_KEY_J;
+    else if (key == (RKey)'k') key = R_KEY_K;
+    else if (key == (RKey)'l') key = R_KEY_L;
+
+    if (g_find_active) {
+        if (key >= R_KEY_0 && key <= R_KEY_9) {
+            if (g_find_len + 1 < sizeof(g_find_buf)) {
+                g_find_buf[g_find_len++] = (char)('0' + (key - R_KEY_0));
+                g_find_buf[g_find_len] = '\0';
+                update_find_label();
+            }
+            return true;
+        }
+        if (key >= R_KEY_KP_0 && key <= R_KEY_KP_9) {
+            if (g_find_len + 1 < sizeof(g_find_buf)) {
+                g_find_buf[g_find_len++] = (char)('0' + (key - R_KEY_KP_0));
+                g_find_buf[g_find_len] = '\0';
+                update_find_label();
+            }
+            return true;
+        }
+        if (key == R_KEY_BACKSPACE) {
+            if (g_find_len > 0) {
+                g_find_buf[--g_find_len] = '\0';
+                update_find_label();
+            }
+            return true;
+        }
+        if (key == R_KEY_ENTER || key == R_KEY_KP_ENTER || key == (RKey)'\n' || key == (RKey)'\r') {
+            uint32_t target_id = 0;
+            if (g_find_len > 0) {
+                unsigned long val = strtoul(g_find_buf, NULL, 10);
+                if (val > 0 && val <= UINT32_MAX) {
+                    target_id = (uint32_t)val;
+                }
+            }
+            g_find_active = false;
+            g_find_len = 0;
+            g_find_buf[0] = '\0';
+            update_find_label();
+            if (target_id > 0) {
+                int idx = find_item_idx_by_id(target_id);
+                if (idx >= 0) {
+                    go_to_item_idx(graph, idx);
+                }
+            }
+            return true;
+        }
+        if (key == R_KEY_ESCAPE || key == R_KEY_F) {
+            g_find_active = false;
+            g_find_len = 0;
+            g_find_buf[0] = '\0';
+            update_find_label();
+            return true;
+        }
+        return true;
+    }
+
+    if (key == R_KEY_F) {
+        g_find_active = true;
+        g_find_len = 0;
+        g_find_buf[0] = '\0';
+        update_find_label();
+        return true;
+    }
 
     int cur_idx = -1;
     if (g_gui_ctx->selected_id != 0) {
@@ -325,17 +450,6 @@ bool sting_gui_handle_key(Rid graph, RKey key, Ruint modifiers) {
         cur_idx = find_item_idx_by_rnode(target);
     }
     if (cur_idx < 0) return false;
-
-    /* Normalize lowercase ASCII keycodes if passed */
-    if (key == (RKey)'h') key = R_KEY_H;
-    else if (key == (RKey)'j') key = R_KEY_J;
-    else if (key == (RKey)'k') key = R_KEY_K;
-    else if (key == (RKey)'l') key = R_KEY_L;
-
-    /* Ignore when Ctrl, Alt, or Super modifiers are held */
-    if (modifiers & (R_MOD_CTRL | R_MOD_ALT | R_MOD_SUPER)) {
-        return false;
-    }
 
     if (key == R_KEY_H) {
         int parent_idx = get_parent_item_idx(cur_idx);
@@ -997,6 +1111,10 @@ sting_gui_context_t *sting_gui_get_context(void) {
 void sting_gui_cleanup_context(void) {
     g_hovered_rnode = 0;
     g_context_rnode = 0;
+    g_find_active = false;
+    g_find_len = 0;
+    g_find_buf[0] = '\0';
+    g_find_label = R_INVALID_ID;
     if (g_gui_ctx) {
         if (g_gui_ctx->items) free(g_gui_ctx->items);
         free(g_gui_ctx);
@@ -1608,7 +1726,8 @@ int sting_gui_run(sting_state_t *st) {
     }
 
     Rid window = Rwindow_create("STINGTRAIL // 2D Flow DAG Viewer (Read-Only)", 1200, 800, R_WINDOW_DEFAULT);
-    Rwindow_set_content(window, graph);
+    Rid root_overlay = sting_gui_create_find_overlay(graph);
+    Rwindow_set_content(window, root_overlay);
     sting_gui_create_context_menu(window, graph, st);
     Rwindow_set_event_hook(window, sting_gui_on_window_event, (void *)(uintptr_t)graph);
     printf("[stingtrail-gui] Running: %d/%zu nodes, %d links rendered (render_distance=%.0f).\n",

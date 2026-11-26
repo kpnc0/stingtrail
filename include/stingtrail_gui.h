@@ -140,13 +140,18 @@ void sting_gui_go_to_random_child(Rid graph, int rnode);
 void sting_gui_go_to_first_child(Rid graph, int rnode);
 void sting_gui_go_to_sibling(Rid graph, int rnode, bool reverse);
 
-/* Vim hjkl key handler:
+/* Vim hjkl & 'f' go-to-id key handler:
  *   h -> immediate parent
  *   j -> next sibling
  *   k -> previous sibling
  *   l -> first child
+ *   f -> enter node-ID jump mode (digits + Enter, Escape cancels)
  */
 bool sting_gui_handle_key(Rid graph, RKey key, Ruint modifiers);
+bool sting_gui_is_find_active(void);
+const char *sting_gui_get_find_input(void);
+Rid sting_gui_create_find_overlay(Rid graph);
+Rid sting_gui_get_find_label(void);
 
 /* Render distance culling (canvas units from camera center; <= 0 disables culling) */
 void sting_gui_set_render_distance(float distance);

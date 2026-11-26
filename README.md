@@ -211,11 +211,12 @@ For visual inspection of mission graphs without altering state, `stingtrail-gui`
 - **Focused Subtree Isolation ("See only this" & "See all")**:
   - Right-click any cell and select **"See only this"** to filter the graph strictly to that node and its descendants, re-anchoring the selected node as the root card (`depth 0, parent 0`).
   - Right-click on empty canvas space and select **"See all"** to restore the complete mission graph view.
-- **Vim Navigation Keybindings**:
+- **Vim Navigation & ID Jump Keybindings**:
   - `h`: Go to immediate parent node
   - `j`: Go to next sibling node (forward)
   - `k`: Go to previous sibling node (reverse)
   - `l`: Go to first child node
+  - `f`: Enter node-ID jump mode (type a numeric node ID and press `Enter` to jump to it, or `Esc` to cancel; shows subtle yellow feedback at the bottom-left while active)
 - **Smooth View Transitions**: Smoothstep camera interpolation when jumping between parent, child, or sibling nodes.
 - **Live File Watcher**: Automatically re-renders the DAG preserving zoom level and selection when the underlying `.jsonl` journal changes.
 - **Hierarchical Layouts**: Supports both multi-column horizontal and vertical layout orientations.
